@@ -1,5 +1,8 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+const socket = io();
+// Esta copia se actualiza con el estado global que envía el servidor.
+let jugadores = {};
 
 // Se comprueba una vez: en móviles se añaden controles táctiles.
 const isMobile = /Android|iPhone|iPad|iPod|Mobile|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -12,6 +15,15 @@ const player = {
   x: window.innerWidth / 2, y: window.innerHeight / 2, angle: 0, speed: 350,
   image: new Image(),
 };
+
+socket.on('jugadores', (jugadoresDelServidor) => {
+  jugadores = jugadoresDelServidor;
+});
+
+// La notificación permite quitarlo sin esperar al siguiente tick de 30 FPS.
+socket.on('jugadorDesconectado', (id) => {
+  delete jugadores[id];
+});
 
 // Express sirve "public" como raíz estática, por eso la ruta comienza con /.
 player.image.src = '/assets/sprites/jugador.png';
@@ -92,6 +104,9 @@ function update(deltaSeconds) {
   } else {
     player.angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
   }
+
+  // El servidor conservará este estado asociado a socket.id.
+  socket.emit('movimiento', { x: player.x, y: player.y, angle: player.angle });
 }
 
 function draw() {
@@ -100,12 +115,17 @@ function draw() {
   ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
   if (!player.image.complete || !player.image.naturalWidth) return;
 
-  // Se traslada al centro antes de rotar: la imagen rota sobre su propio centro.
-  ctx.save();
-  ctx.translate(player.x, player.y);
-  ctx.rotate(player.angle);
-  ctx.drawImage(player.image, -player.image.naturalWidth / 2, -player.image.naturalHeight / 2);
-  ctx.restore();
+  // Cada entrada fue creada y sincronizada por el servidor.
+  for (const id in jugadores) {
+    const jugador = jugadores[id];
+
+    // Se traslada al centro antes de rotar: la imagen rota sobre su propio centro.
+    ctx.save();
+    ctx.translate(jugador.x, jugador.y);
+    ctx.rotate(jugador.angle);
+    ctx.drawImage(player.image, -player.image.naturalWidth / 2, -player.image.naturalHeight / 2);
+    ctx.restore();
+  }
 }
 
 let previousTime = performance.now();
