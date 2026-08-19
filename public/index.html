@@ -30,11 +30,27 @@
     </style>
   </head>
   <body>
+    <div id="pantalla-inicio">
+      <div class="panel-inicio">
+        <h1>Videojuegos en Red</h1>
+        <label for="nickname">Nickname</label>
+        <input id="nickname" type="text" maxlength="16" autocomplete="nickname" placeholder="Escribe tu nombre" />
+        <button id="jugar-button" type="button">Jugar</button>
+      </div>
+    </div>
+    <div id="pantalla-fin">
+      <div class="panel-fin">
+        <h1>Fin de la Partida</h1>
+        <ul id="podio"></ul>
+      </div>
+    </div>
     <div id="scoreboard" aria-label="Marcador de eliminaciones"></div>
+    <div id="respawn-message" aria-live="polite"></div>
     <canvas id="game"></canvas>
     <div id="move-zone" class="joystick-zone" aria-label="Joystick de movimiento"></div>
     <div id="aim-zone" class="joystick-zone" aria-label="Joystick de apuntado"></div>
     <button id="swap-button" type="button">Cambiar</button>
+    <button id="reload-button" type="button">Recargar</button>
 
     <script src="/js/game.js?v=scoreboard"></script>
   </body>

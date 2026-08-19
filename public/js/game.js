@@ -1,7 +1,14 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const swapButton = document.getElementById('swap-button');
+const reloadButton = document.getElementById('reload-button');
 const scoreboard = document.getElementById('scoreboard');
+const respawnMessage = document.getElementById('respawn-message');
+const inicioScreen = document.getElementById('pantalla-inicio');
+const finishScreen = document.getElementById('pantalla-fin');
+const nicknameInput = document.getElementById('nickname');
+const playButton = document.getElementById('jugar-button');
+const podiumList = document.getElementById('podio');
 // Adaptador: el resto del juego llama a network.send/on sin conocer el transporte.
 const network = {
   id: null,
@@ -18,8 +25,13 @@ const network = {
 let jugadores = {};
 let balas = [];
 let plataformas = [];
+let obstaculos = [];
 let mapWidth = 2000;
 let mapHeight = 2000;
+let gameStarted = false;
+let gameFinished = false;
+let networkReady = false;
+let tiempoPartida = 120;
 
 /** Ordena el estado recibido y actualiza el marcador visible en pantalla. */
 function actualizarScoreboard(jugadoresRecibidos) {
@@ -27,7 +39,7 @@ function actualizarScoreboard(jugadoresRecibidos) {
     .sort(([, jugadorA], [, jugadorB]) => (jugadorB.kills || 0) - (jugadorA.kills || 0));
 
   scoreboard.innerHTML = ranking.map(([, jugador], index) => (
-    `<div>Jugador ${index + 1}: ${jugador.kills || 0} Kills</div>`
+    `<div>${jugador.nombre || `Jugador ${index + 1}`}: ${jugador.kills || 0} Kills</div>`
   )).join('');
 }
 
@@ -40,16 +52,17 @@ const movement = { x: 0, y: 0 };
 const aim = { x: 1, y: 0 };
 // Réplica local de cooldowns para feedback inmediato; el servidor sigue siendo autoritativo.
 const STATS_ARMAS_CLIENTE = {
-  'puños': { cooldown: 400 },
-  pistola: { cooldown: 300 },
-  escopeta: { cooldown: 800 },
-  rifle: { cooldown: 1000 },
+  'puños': { cooldown: 400, capacidadCargador: 0 },
+  pistola: { cooldown: 300, capacidadCargador: 12 },
+  escopeta: { cooldown: 800, capacidadCargador: 6 },
+  rifle: { cooldown: 1000, capacidadCargador: 30 },
   botiquin: { cooldown: 400 },
   escudo_pocion: { cooldown: 400 },
 };
 let lastShotTime = -Infinity;
 let cooldownFeedbackUntil = 0;
 let cooldownFeedbackSlot = -1;
+let noAmmoMessageUntil = 0;
 
 const player = {
   x: window.innerWidth / 2, y: window.innerHeight / 2, angle: 0, speed: 350,
@@ -71,15 +84,54 @@ network.on('identidad', ({ id }) => {
   network.id = id;
 });
 
-network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT }) => {
+network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, obstaculos: obstaculosDelServidor }) => {
   mapWidth = MAP_WIDTH;
   mapHeight = MAP_HEIGHT;
+  obstaculos = obstaculosDelServidor || [];
 });
 
-network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor }) => {
+network.on('inicioPartida', ({ tiempoRestante }) => {
+  gameStarted = true;
+  gameFinished = false;
+  tiempoPartida = tiempoRestante ?? 120;
+  inicioScreen.style.display = 'none';
+  finishScreen.style.display = 'none';
+  setGameVisibility(true);
+});
+
+network.on('tiempoPartida', (tiempo) => {
+  tiempoPartida = Math.max(0, Number(tiempo) || 0);
+});
+
+network.on('finDeJuego', (podio) => {
+  gameStarted = false;
+  gameFinished = true;
+  setGameVisibility(false);
+  podiumList.replaceChildren();
+  podio.forEach((jugador, index) => {
+    const item = document.createElement('li');
+    item.textContent = `${index + 1}. ${jugador.nombre} - ${jugador.kills} Kills`;
+    podiumList.appendChild(item);
+  });
+  finishScreen.style.display = 'flex';
+});
+
+network.on('reinicioPartida', () => {
+  gameStarted = false;
+  gameFinished = false;
+  tiempoPartida = 120;
+  setGameVisibility(false);
+  finishScreen.style.display = 'none';
+  inicioScreen.style.display = 'flex';
+  nicknameInput.value = '';
+  playButton.disabled = false;
+});
+
+network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor }) => {
   jugadores = jugadoresDelServidor;
   balas = balasDelServidor;
   plataformas = plataformasDelServidor || [];
+  obstaculos = obstaculosDelServidor || obstaculos;
   actualizarScoreboard(jugadores);
 
   // Sincroniza el jugador local, especialmente tras un respawn del servidor.
@@ -116,8 +168,11 @@ async function connectNetwork() {
       await loadSocketIoClient();
       const socket = window.io();
       network.send = (type, data) => socket.emit(type, data);
-      socket.on('connect', () => { network.id = socket.id; });
-      for (const type of ['configMapa', 'estadoJuego', 'jugadorDesconectado']) {
+      socket.on('connect', () => { network.id = socket.id; networkReady = true; });
+      for (const type of [
+        'configMapa', 'estadoJuego', 'jugadorDesconectado', 'inicioPartida',
+        'tiempoPartida', 'finDeJuego', 'reinicioPartida',
+      ]) {
         socket.on(type, (data) => network.receive(type, data));
       }
     } else if (modo === 'nativo') {
@@ -126,6 +181,7 @@ async function connectNetwork() {
       network.send = (type, data) => {
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type, data }));
       };
+      socket.addEventListener('open', () => { networkReady = true; });
       socket.addEventListener('message', (event) => {
         try {
           const { type, data } = JSON.parse(event.data);
@@ -144,6 +200,25 @@ async function connectNetwork() {
 
 connectNetwork();
 
+function setGameVisibility(visible) {
+  const elements = [canvas, scoreboard, swapButton, reloadButton, respawnMessage,
+    document.getElementById('move-zone'), document.getElementById('aim-zone')];
+  elements.forEach((element) => {
+    if (element) element.style.display = visible ? '' : 'none';
+  });
+}
+
+playButton.addEventListener('click', () => {
+  const nombre = nicknameInput.value.trim();
+  if (!nombre || !networkReady || gameStarted || gameFinished) return;
+  playButton.disabled = true;
+  network.send('unirse', { nombre });
+});
+
+nicknameInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') playButton.click();
+});
+
 // Express sirve "public" como raíz estática, por eso la ruta comienza con /.
 player.image.src = '/assets/sprites/jugador.png';
 player.image.addEventListener('error', () => console.error('No se pudo cargar /assets/sprites/jugador.png'));
@@ -151,6 +226,9 @@ bulletImage.src = '/assets/sprites/bala.png';
 bulletImage.addEventListener('error', () => console.error('No se pudo cargar /assets/sprites/bala.png'));
 floorImage.src = '/assets/tiles/suelo.png';
 floorImage.addEventListener('error', () => console.error('No se pudo cargar /assets/tiles/suelo.png'));
+const obstacleImage = new Image();
+obstacleImage.src = '/assets/sprites/caja.png';
+obstacleImage.addEventListener('error', () => console.error('No se pudo cargar /assets/sprites/caja.png'));
 platformImage.src = '/assets/sprites/plataforma.png';
 platformImage.addEventListener('error', () => console.error('No se pudo cargar /assets/sprites/plataforma.png'));
 itemImages.pistola.src = '/assets/sprites/pistola.png';
@@ -175,11 +253,17 @@ resizeCanvas();
 
 // ----- Controles de PC ----------------------------------------------------
 window.addEventListener('keydown', (event) => {
-  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Digit1', 'Digit2', 'Digit3', 'KeyE'].includes(event.code)) event.preventDefault();
+  // Mientras se escribe el nickname, las teclas WASD deben comportarse como texto normal.
+  const elementoEscritura = event.target instanceof HTMLInputElement
+    || event.target instanceof HTMLTextAreaElement;
+  if (elementoEscritura) return;
+
+  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Digit1', 'Digit2', 'Digit3', 'KeyE', 'KeyR'].includes(event.code)) event.preventDefault();
   keys.add(event.code);
   const slot = { Digit1: 0, Digit2: 1, Digit3: 2 }[event.code];
   if (slot !== undefined) selectSlot(slot);
   if (event.code === 'KeyE' && !event.repeat) attemptExchange();
+  if (event.code === 'KeyR' && !event.repeat) requestReload();
 });
 window.addEventListener('keyup', (event) => keys.delete(event.code));
 window.addEventListener('blur', () => keys.clear());
@@ -191,10 +275,19 @@ canvas.addEventListener('mousemove', (event) => {
 
 // ----- Disparo ------------------------------------------------------------
 function shoot() {
+  if (!gameStarted || gameFinished) return false;
   const jugadorLocal = jugadores[network.id];
   const arma = jugadorLocal?.inventario?.[jugadorLocal.slotSeleccionado] || 'puños';
   const cooldown = STATS_ARMAS_CLIENTE[arma]?.cooldown || STATS_ARMAS_CLIENTE['puños'].cooldown;
   const ahora = performance.now();
+  const statsCliente = STATS_ARMAS_CLIENTE[arma] || STATS_ARMAS_CLIENTE['puños'];
+
+  if (jugadorLocal?.recargando) return false;
+  if (statsCliente.capacidadCargador && jugadorLocal?.balasEnCargador <= 0) {
+    // Feedback inmediato: no se envía un disparo inútil al servidor.
+    noAmmoMessageUntil = ahora + 1800;
+    return false;
+  }
 
   // Si el intento local está dentro del cooldown, el slot se marca en rojo temporalmente.
   if (ahora - lastShotTime < cooldown) {
@@ -208,13 +301,17 @@ function shoot() {
   return true;
 }
 
+function requestReload() {
+  if (gameStarted && !jugadores[network.id]?.muerto) network.send('recargar', {});
+}
+
 canvas.addEventListener('mousedown', (event) => {
   if (!isMobile && event.button === 0) shoot();
 });
 
 /** Cambia el slot local para respuesta inmediata y lo sincroniza por el transporte activo. */
 function selectSlot(slot) {
-  if (!Number.isInteger(slot) || slot < 0 || slot > 2) return;
+  if (!gameStarted || !Number.isInteger(slot) || slot < 0 || slot > 2) return;
   const jugadorLocal = jugadores[network.id];
   if (jugadorLocal) jugadorLocal.slotSeleccionado = slot;
   network.send('cambiarSlot', { slot });
@@ -243,20 +340,35 @@ canvas.addEventListener('pointerdown', (event) => {
 });
 
 function getNearbyLootPlatform(jugadorLocal) {
-  if (!jugadorLocal?.inventario || jugadorLocal.inventario.some((item) => item === null)) return null;
+  if (!jugadorLocal || jugadorLocal.muerto || !jugadorLocal.inventario
+    || jugadorLocal.inventario.some((item) => item === null)) return null;
   return plataformas.find((plataforma) => (
     plataforma.objeto !== null
     && Math.hypot(jugadorLocal.x - plataforma.x, jugadorLocal.y - plataforma.y) <= 55
   )) || null;
 }
 
+/** Muestra el tiempo restante de respawn del jugador local. */
+function actualizarMensajeRespawn(jugadorLocal) {
+  if (!jugadorLocal?.muerto) {
+    respawnMessage.classList.remove('visible');
+    return;
+  }
+
+  const segundos = Math.max(0, Math.ceil((jugadorLocal.respawnAt - Date.now()) / 1000));
+  respawnMessage.textContent = `Reaparecerá en: ${segundos}s`;
+  respawnMessage.classList.add('visible');
+}
+
 function attemptExchange() {
+  if (!gameStarted || gameFinished) return;
   const jugadorLocal = jugadores[network.id];
   if (getNearbyLootPlatform(jugadorLocal)) network.send('intercambiar', {});
 }
 
 // En móvil, el botón solo se muestra cuando el cliente detecta una oportunidad válida.
 swapButton?.addEventListener('click', attemptExchange);
+reloadButton?.addEventListener('click', requestReload);
 
 /** Carga NippleJS únicamente si el dispositivo es móvil. */
 function loadNippleJS() {
@@ -380,6 +492,44 @@ function drawInventoryUI(jugadorLocal) {
   }
 }
 
+function drawAmmoUI(jugadorLocal) {
+  const arma = jugadorLocal?.inventario?.[jugadorLocal.slotSeleccionado] || 'puños';
+  const stats = STATS_ARMAS_CLIENTE[arma];
+  if (!stats?.capacidadCargador) return;
+
+  ctx.save();
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fff';
+  ctx.fillText(
+    `Balas: ${jugadorLocal.balasEnCargador || 0} / ${stats.capacidadCargador}`,
+    window.innerWidth / 2,
+    window.innerHeight - 96,
+  );
+  if (jugadorLocal.recargando) {
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillStyle = '#90caf9';
+    ctx.fillText('RECARGANDO...', window.innerWidth / 2, window.innerHeight / 2 - 90);
+  }
+  if (noAmmoMessageUntil > performance.now()) {
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillStyle = '#ffcc80';
+    ctx.fillText('Sin balas. Presiona R para recargar', window.innerWidth / 2, window.innerHeight - 122);
+  }
+  ctx.restore();
+}
+
+function drawMatchTimer() {
+  ctx.save();
+  ctx.font = 'bold 22px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = tiempoPartida <= 10 ? '#ff5252' : '#fff';
+  const minutos = Math.floor(tiempoPartida / 60);
+  const segundos = String(tiempoPartida % 60).padStart(2, '0');
+  ctx.fillText(`Tiempo: ${minutos}:${segundos}`, window.innerWidth / 2, 32);
+  ctx.restore();
+}
+
 function draw() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   ctx.fillStyle = '#20242b';
@@ -406,6 +556,16 @@ function draw() {
     ctx.fillRect(0, 0, mapWidth, mapHeight);
   }
   ctx.restore();
+
+  // Obstáculos estáticos: se dibujan antes de plataformas, balas y jugadores.
+  for (const obstaculo of obstaculos) {
+    if (obstacleImage.complete && obstacleImage.naturalWidth) {
+      ctx.drawImage(obstacleImage, obstaculo.x, obstaculo.y, obstaculo.width, obstaculo.height);
+    } else {
+      ctx.fillStyle = '#555';
+      ctx.fillRect(obstaculo.x, obstaculo.y, obstaculo.width, obstaculo.height);
+    }
+  }
 
   // Borde del mundo: ayuda a comprobar visualmente dónde no se puede avanzar.
   ctx.strokeStyle = '#ff3b30';
@@ -445,6 +605,7 @@ function draw() {
     // Cada entrada fue creada y sincronizada por el servidor.
     for (const id in jugadores) {
       const jugador = jugadores[id];
+      if (jugador.muerto) continue;
 
       // Se traslada al centro antes de rotar: la imagen rota sobre su propio centro.
       ctx.save();
@@ -453,6 +614,17 @@ function draw() {
       ctx.drawImage(player.image, -player.image.naturalWidth / 2, -player.image.naturalHeight / 2);
       ctx.restore();
       drawWeaponOnPlayer(jugador);
+
+      // Etiqueta visible para distinguir la IA de los jugadores humanos.
+      ctx.save();
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#000';
+      ctx.strokeText(jugador.esBot ? 'BOT' : (jugador.nombre || ''), jugador.x, jugador.y - player.image.naturalHeight / 2 - 28);
+      ctx.fillStyle = jugador.esBot ? '#ffb74d' : '#fff';
+      ctx.fillText(jugador.esBot ? 'BOT' : (jugador.nombre || ''), jugador.x, jugador.y - player.image.naturalHeight / 2 - 28);
+      ctx.restore();
 
       // Barra de salud encima de cada sprite: fondo rojo y vida restante en verde.
       const barWidth = 56;
@@ -492,8 +664,11 @@ function draw() {
 
   // Restaura el contexto para que la cámara no afecte al siguiente frame.
   ctx.restore();
+  actualizarMensajeRespawn(jugadorLocal);
   swapButton?.classList.toggle('visible', Boolean(nearbyLoot && isMobile));
   drawInventoryUI(jugadorLocal);
+  drawAmmoUI(jugadorLocal);
+  drawMatchTimer();
 }
 
 let previousTime = performance.now();
@@ -501,8 +676,10 @@ function gameLoop(currentTime) {
   // Se limita el delta para que no salte al regresar a la pestaña.
   const deltaSeconds = Math.min((currentTime - previousTime) / 1000, 0.1);
   previousTime = currentTime;
-  update(deltaSeconds);
-  draw();
+  if (gameStarted && !gameFinished) {
+    update(deltaSeconds);
+    draw();
+  }
   requestAnimationFrame(gameLoop);
 }
 requestAnimationFrame(gameLoop);
