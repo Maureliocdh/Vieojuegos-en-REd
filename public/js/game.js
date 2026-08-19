@@ -1,9 +1,21 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-const socket = io();
+// Adaptador: el resto del juego llama a network.send/on sin conocer el transporte.
+const network = {
+  id: null,
+  handlers: new Map(),
+  send: () => {},
+  on(type, handler) {
+    this.handlers.set(type, handler);
+  },
+  receive(type, data) {
+    this.handlers.get(type)?.(data);
+  },
+};
 // Esta copia se actualiza con el estado global que envía el servidor.
 let jugadores = {};
 let balas = [];
+let plataformas = [];
 let mapWidth = 2000;
 let mapHeight = 2000;
 
@@ -22,18 +34,30 @@ const player = {
 };
 const bulletImage = new Image();
 const floorImage = new Image();
+const platformImage = new Image();
+const itemImages = {
+  pistola: new Image(),
+  escopeta: new Image(),
+  botiquin: new Image(),
+  puños: new Image(),
+};
 
-socket.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT }) => {
+network.on('identidad', ({ id }) => {
+  network.id = id;
+});
+
+network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT }) => {
   mapWidth = MAP_WIDTH;
   mapHeight = MAP_HEIGHT;
 });
 
-socket.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor }) => {
+network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor }) => {
   jugadores = jugadoresDelServidor;
   balas = balasDelServidor;
+  plataformas = plataformasDelServidor || [];
 
   // Sincroniza el jugador local, especialmente tras un respawn del servidor.
-  const jugadorLocal = jugadores[socket.id];
+  const jugadorLocal = jugadores[network.id];
   if (jugadorLocal) {
     player.x = jugadorLocal.x;
     player.y = jugadorLocal.y;
@@ -42,9 +66,57 @@ socket.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServ
 });
 
 // La notificación permite quitarlo sin esperar al siguiente tick de 30 FPS.
-socket.on('jugadorDesconectado', (id) => {
+network.on('jugadorDesconectado', (id) => {
   delete jugadores[id];
 });
+
+function loadSocketIoClient() {
+  if (window.io) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = '/socket.io/socket.io.js';
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('No se pudo cargar el cliente de Socket.IO'));
+    document.head.appendChild(script);
+  });
+}
+
+async function connectNetwork() {
+  try {
+    const response = await fetch('/modo');
+    const { modo } = await response.json();
+
+    if (modo === 'socket.io') {
+      await loadSocketIoClient();
+      const socket = window.io();
+      network.send = (type, data) => socket.emit(type, data);
+      socket.on('connect', () => { network.id = socket.id; });
+      for (const type of ['configMapa', 'estadoJuego', 'jugadorDesconectado']) {
+        socket.on(type, (data) => network.receive(type, data));
+      }
+    } else if (modo === 'nativo') {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const socket = new WebSocket(`${protocol}//${window.location.host}`);
+      network.send = (type, data) => {
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type, data }));
+      };
+      socket.addEventListener('message', (event) => {
+        try {
+          const { type, data } = JSON.parse(event.data);
+          network.receive(type, data);
+        } catch {
+          console.warn('Mensaje WebSocket inválido ignorado');
+        }
+      });
+    } else {
+      throw new Error(`Modo de red no reconocido: ${modo}`);
+    }
+  } catch (error) {
+    console.error('No se pudo conectar al servidor:', error);
+  }
+}
+
+connectNetwork();
 
 // Express sirve "public" como raíz estática, por eso la ruta comienza con /.
 player.image.src = '/assets/sprites/jugador.png';
@@ -53,6 +125,13 @@ bulletImage.src = '/assets/sprites/bala.png';
 bulletImage.addEventListener('error', () => console.error('No se pudo cargar /assets/sprites/bala.png'));
 floorImage.src = '/assets/tiles/suelo.png';
 floorImage.addEventListener('error', () => console.error('No se pudo cargar /assets/tiles/suelo.png'));
+platformImage.src = '/assets/sprites/plataforma.png';
+platformImage.addEventListener('error', () => console.error('No se pudo cargar /assets/sprites/plataforma.png'));
+itemImages.pistola.src = '/assets/sprites/pistola.png';
+itemImages.escopeta.src = '/assets/sprites/escopeta.png';
+itemImages.botiquin.src = '/assets/sprites/botiquin.png';
+// Se reutiliza el sprite del jugador como marcador temporal para el slot "puños".
+itemImages.puños.src = '/assets/sprites/jugador.png';
 
 /** Ajusta el búfer para pantallas retina sin cambiar las coordenadas del juego. */
 function resizeCanvas() {
@@ -68,8 +147,10 @@ resizeCanvas();
 
 // ----- Controles de PC ----------------------------------------------------
 window.addEventListener('keydown', (event) => {
-  if (['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(event.code)) event.preventDefault();
+  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Digit1', 'Digit2', 'Digit3'].includes(event.code)) event.preventDefault();
   keys.add(event.code);
+  const slot = { Digit1: 0, Digit2: 1, Digit3: 2 }[event.code];
+  if (slot !== undefined) selectSlot(slot);
 });
 window.addEventListener('keyup', (event) => keys.delete(event.code));
 window.addEventListener('blur', () => keys.clear());
@@ -81,11 +162,41 @@ canvas.addEventListener('mousemove', (event) => {
 
 // ----- Disparo ------------------------------------------------------------
 function shoot() {
-  socket.emit('disparar', { x: player.x, y: player.y, angle: player.angle });
+  network.send('disparar', { x: player.x, y: player.y, angle: player.angle });
 }
 
 canvas.addEventListener('mousedown', (event) => {
-  if (event.button === 0) shoot();
+  if (!isMobile && event.button === 0) shoot();
+});
+
+/** Cambia el slot local para respuesta inmediata y lo sincroniza por el transporte activo. */
+function selectSlot(slot) {
+  if (!Number.isInteger(slot) || slot < 0 || slot > 2) return;
+  const jugadorLocal = jugadores[network.id];
+  if (jugadorLocal) jugadorLocal.slotSeleccionado = slot;
+  network.send('cambiarSlot', { slot });
+}
+
+function getInventorySlotAt(screenX, screenY) {
+  const size = 64;
+  const gap = 12;
+  const totalWidth = size * 3 + gap * 2;
+  const startX = (window.innerWidth - totalWidth) / 2;
+  const startY = window.innerHeight - size - 24;
+  if (screenY < startY || screenY > startY + size) return null;
+  const slot = Math.floor((screenX - startX) / (size + gap));
+  const slotX = startX + slot * (size + gap);
+  return slot >= 0 && slot < 3 && screenX <= slotX + size ? slot : null;
+}
+
+// En móvil, tocar un slot cambia de objeto sin disparar.
+canvas.addEventListener('pointerdown', (event) => {
+  if (!isMobile) return;
+  const slot = getInventorySlotAt(event.clientX, event.clientY);
+  if (slot !== null) {
+    event.preventDefault();
+    selectSlot(slot);
+  }
 });
 
 /** Carga NippleJS únicamente si el dispositivo es móvil. */
@@ -151,7 +262,46 @@ function update(deltaSeconds) {
   }
 
   // El servidor conservará este estado asociado a socket.id.
-  socket.emit('movimiento', { x: player.x, y: player.y, angle: player.angle });
+  network.send('movimiento', { x: player.x, y: player.y, angle: player.angle });
+}
+
+/** Dibuja un icono de objeto centrado; si su sprite aún no carga, muestra su nombre. */
+function drawItemIcon(item, x, y, size) {
+  const image = itemImages[item];
+  if (image?.complete && image.naturalWidth) {
+    ctx.drawImage(image, x - size / 2, y - size / 2, size, size);
+    return;
+  }
+  ctx.fillStyle = '#fff';
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(item, x, y + 4);
+}
+
+/** UI de inventario: se llama después de restaurar la cámara, en coordenadas de pantalla. */
+function drawInventoryUI(jugadorLocal) {
+  const size = 64;
+  const gap = 12;
+  const totalWidth = size * 3 + gap * 2;
+  const startX = (window.innerWidth - totalWidth) / 2;
+  const startY = window.innerHeight - size - 24;
+  const inventario = jugadorLocal.inventario || ['puños', null, null];
+
+  for (let slot = 0; slot < 3; slot += 1) {
+    const x = startX + slot * (size + gap);
+    const selected = slot === jugadorLocal.slotSeleccionado;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(x, startY, size, size);
+    ctx.strokeStyle = selected ? '#ffd54a' : '#ffffff';
+    ctx.lineWidth = selected ? 4 : 2;
+    ctx.strokeRect(x, startY, size, size);
+    if (inventario[slot]) drawItemIcon(inventario[slot], x + size / 2, startY + size / 2, 42);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(String(slot + 1), x + 5, startY + 15);
+  }
 }
 
 function draw() {
@@ -160,7 +310,7 @@ function draw() {
   ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
   // El jugador local es la referencia de la cámara. Antes de recibir estado se usa la predicción local.
-  const jugadorLocal = jugadores[socket.id] || player;
+  const jugadorLocal = jugadores[network.id] || player;
   ctx.save();
   ctx.translate(window.innerWidth / 2 - jugadorLocal.x, window.innerHeight / 2 - jugadorLocal.y);
 
@@ -186,6 +336,22 @@ function draw() {
   ctx.lineWidth = 5;
   ctx.strokeRect(0, 0, mapWidth, mapHeight);
 
+  // Las plataformas se dibujan antes que los jugadores, por lo que quedan debajo de ellos.
+  for (const plataforma of plataformas) {
+    if (platformImage.complete && platformImage.naturalWidth) {
+      ctx.drawImage(
+        platformImage,
+        plataforma.x - platformImage.naturalWidth / 2,
+        plataforma.y - platformImage.naturalHeight / 2,
+      );
+    } else {
+      ctx.fillStyle = '#777';
+      ctx.fillRect(plataforma.x - 28, plataforma.y - 14, 56, 28);
+    }
+    // El objeto se eleva visualmente sobre la plataforma.
+    if (plataforma.objeto) drawItemIcon(plataforma.objeto, plataforma.x, plataforma.y - 42, 38);
+  }
+
   // Todas las balas provienen del estado enviado por el servidor.
   if (bulletImage.complete && bulletImage.naturalWidth) {
     for (const bala of balas) {
@@ -197,32 +363,33 @@ function draw() {
     }
   }
 
-  if (!player.image.complete || !player.image.naturalWidth) return;
+  if (player.image.complete && player.image.naturalWidth) {
+    // Cada entrada fue creada y sincronizada por el servidor.
+    for (const id in jugadores) {
+      const jugador = jugadores[id];
 
-  // Cada entrada fue creada y sincronizada por el servidor.
-  for (const id in jugadores) {
-    const jugador = jugadores[id];
+      // Se traslada al centro antes de rotar: la imagen rota sobre su propio centro.
+      ctx.save();
+      ctx.translate(jugador.x, jugador.y);
+      ctx.rotate(jugador.angle);
+      ctx.drawImage(player.image, -player.image.naturalWidth / 2, -player.image.naturalHeight / 2);
+      ctx.restore();
 
-    // Se traslada al centro antes de rotar: la imagen rota sobre su propio centro.
-    ctx.save();
-    ctx.translate(jugador.x, jugador.y);
-    ctx.rotate(jugador.angle);
-    ctx.drawImage(player.image, -player.image.naturalWidth / 2, -player.image.naturalHeight / 2);
-    ctx.restore();
-
-    // Barra de salud encima de cada sprite: fondo rojo y vida restante en verde.
-    const barWidth = 56;
-    const barHeight = 7;
-    const barY = jugador.y - player.image.naturalHeight / 2 - 16;
-    const vida = Math.max(0, Math.min(100, jugador.vida));
-    ctx.fillStyle = '#c62828';
-    ctx.fillRect(jugador.x - barWidth / 2, barY, barWidth, barHeight);
-    ctx.fillStyle = '#2ecc71';
-    ctx.fillRect(jugador.x - barWidth / 2, barY, barWidth * (vida / 100), barHeight);
+      // Barra de salud encima de cada sprite: fondo rojo y vida restante en verde.
+      const barWidth = 56;
+      const barHeight = 7;
+      const barY = jugador.y - player.image.naturalHeight / 2 - 16;
+      const vida = Math.max(0, Math.min(100, jugador.vida));
+      ctx.fillStyle = '#c62828';
+      ctx.fillRect(jugador.x - barWidth / 2, barY, barWidth, barHeight);
+      ctx.fillStyle = '#2ecc71';
+      ctx.fillRect(jugador.x - barWidth / 2, barY, barWidth * (vida / 100), barHeight);
+    }
   }
 
   // Restaura el contexto para que la cámara no afecte al siguiente frame.
   ctx.restore();
+  drawInventoryUI(jugadorLocal);
 }
 
 let previousTime = performance.now();
