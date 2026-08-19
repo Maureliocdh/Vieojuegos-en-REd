@@ -25,8 +25,16 @@ const keys = new Set();
 const mouse = { x: 0, y: 0 };
 const movement = { x: 0, y: 0 };
 const aim = { x: 1, y: 0 };
-const FIRE_COOLDOWN = 300;
+// Réplica local de cooldowns para feedback inmediato; el servidor sigue siendo autoritativo.
+const STATS_ARMAS_CLIENTE = {
+  'puños': { cooldown: 400 },
+  pistola: { cooldown: 300 },
+  escopeta: { cooldown: 800 },
+  rifle: { cooldown: 1000 },
+};
 let lastShotTime = -Infinity;
+let cooldownFeedbackUntil = 0;
+let cooldownFeedbackSlot = -1;
 
 const player = {
   x: window.innerWidth / 2, y: window.innerHeight / 2, angle: 0, speed: 350,
@@ -38,6 +46,7 @@ const platformImage = new Image();
 const itemImages = {
   pistola: new Image(),
   escopeta: new Image(),
+  rifle: new Image(),
   botiquin: new Image(),
   puños: new Image(),
 };
@@ -130,6 +139,7 @@ platformImage.addEventListener('error', () => console.error('No se pudo cargar /
 itemImages.pistola.src = '/assets/sprites/pistola.png';
 itemImages.escopeta.src = '/assets/sprites/escopeta.png';
 itemImages.botiquin.src = '/assets/sprites/botiquin.png';
+itemImages.rifle.src = '/assets/sprites/rifle.png';
 // Se reutiliza el sprite del jugador como marcador temporal para el slot "puños".
 itemImages.puños.src = '/assets/sprites/jugador.png';
 
@@ -162,7 +172,21 @@ canvas.addEventListener('mousemove', (event) => {
 
 // ----- Disparo ------------------------------------------------------------
 function shoot() {
+  const jugadorLocal = jugadores[network.id];
+  const arma = jugadorLocal?.inventario?.[jugadorLocal.slotSeleccionado] || 'puños';
+  const cooldown = STATS_ARMAS_CLIENTE[arma]?.cooldown || STATS_ARMAS_CLIENTE['puños'].cooldown;
+  const ahora = performance.now();
+
+  // Si el intento local está dentro del cooldown, el slot se marca en rojo temporalmente.
+  if (ahora - lastShotTime < cooldown) {
+    cooldownFeedbackUntil = ahora + 220;
+    cooldownFeedbackSlot = jugadorLocal?.slotSeleccionado ?? 0;
+    return false;
+  }
+
+  lastShotTime = ahora;
   network.send('disparar', { x: player.x, y: player.y, angle: player.angle });
+  return true;
 }
 
 canvas.addEventListener('mousedown', (event) => {
@@ -225,12 +249,8 @@ function createMobileControls() {
     aim.x = data.vector.x;
     aim.y = -data.vector.y;
     player.angle = Math.atan2(aim.y, aim.x);
-    // El joystick derecho permite apuntar y dispara como máximo una vez cada 300 ms.
-    const now = performance.now();
-    if (now - lastShotTime >= FIRE_COOLDOWN) {
-      lastShotTime = now;
-      shoot();
-    }
+    // La función shoot aplica el cooldown específico del arma actual.
+    shoot();
   });
   aimStick.on('end', () => Object.assign(aim, { x: 0, y: 0 }));
 }
@@ -278,6 +298,24 @@ function drawItemIcon(item, x, y, size) {
   ctx.fillText(item, x, y + 4);
 }
 
+/** Superpone el arma seleccionada sobre la dirección de las manos del personaje. */
+function drawWeaponOnPlayer(jugador) {
+  const arma = jugador.inventario?.[jugador.slotSeleccionado];
+  if (!arma || arma === 'puños') return;
+  const image = itemImages[arma];
+  if (!image?.complete || !image.naturalWidth) return;
+
+  const offset = 28;
+  ctx.save();
+  ctx.translate(
+    jugador.x + Math.cos(jugador.angle) * offset,
+    jugador.y + Math.sin(jugador.angle) * offset,
+  );
+  ctx.rotate(jugador.angle);
+  ctx.drawImage(image, -24, -12, 48, 24);
+  ctx.restore();
+}
+
 /** UI de inventario: se llama después de restaurar la cámara, en coordenadas de pantalla. */
 function drawInventoryUI(jugadorLocal) {
   const size = 64;
@@ -290,9 +328,12 @@ function drawInventoryUI(jugadorLocal) {
   for (let slot = 0; slot < 3; slot += 1) {
     const x = startX + slot * (size + gap);
     const selected = slot === jugadorLocal.slotSeleccionado;
+    const cooldownError = selected
+      && slot === cooldownFeedbackSlot
+      && performance.now() < cooldownFeedbackUntil;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.fillRect(x, startY, size, size);
-    ctx.strokeStyle = selected ? '#ffd54a' : '#ffffff';
+    ctx.strokeStyle = cooldownError ? '#ef3340' : (selected ? '#ffd54a' : '#ffffff');
     ctx.lineWidth = selected ? 4 : 2;
     ctx.strokeRect(x, startY, size, size);
     if (inventario[slot]) drawItemIcon(inventario[slot], x + size / 2, startY + size / 2, 42);
@@ -358,7 +399,9 @@ function draw() {
       ctx.save();
       ctx.translate(bala.x, bala.y);
       ctx.rotate(bala.angle);
-      ctx.drawImage(bulletImage, -bulletImage.naturalWidth / 2, -bulletImage.naturalHeight / 2);
+      if (bala.arma !== 'puños') {
+        ctx.drawImage(bulletImage, -bulletImage.naturalWidth / 2, -bulletImage.naturalHeight / 2);
+      }
       ctx.restore();
     }
   }
@@ -374,6 +417,7 @@ function draw() {
       ctx.rotate(jugador.angle);
       ctx.drawImage(player.image, -player.image.naturalWidth / 2, -player.image.naturalHeight / 2);
       ctx.restore();
+      drawWeaponOnPlayer(jugador);
 
       // Barra de salud encima de cada sprite: fondo rojo y vida restante en verde.
       const barWidth = 56;

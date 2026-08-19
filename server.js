@@ -16,6 +16,14 @@ const plataformas = [
   { x: 1400, y: 1600, objeto: null },
 ];
 
+// Configuración autoritativa: el cliente solo la replica para mostrar feedback visual.
+const STATS_ARMAS = {
+  'puños': { daño: 5, rango: 80, velocidad: 500, balas: 1, dispersion: 0, cooldown: 400 },
+  pistola: { daño: 15, rango: 1000, velocidad: 900, balas: 1, dispersion: 0, cooldown: 300 },
+  escopeta: { daño: 10, rango: 700, velocidad: 650, balas: 3, dispersion: 15, cooldown: 800 },
+  rifle: { daño: 25, rango: 1600, velocidad: 1200, balas: 1, dispersion: 0, cooldown: 1000 },
+};
+
 const MAP_WIDTH = 2000;
 const MAP_HEIGHT = 2000;
 const TICK_RATE = 30;
@@ -64,6 +72,7 @@ function addPlayer(id) {
     vida: 100,
     inventario: ['puños', null, null],
     slotSeleccionado: 0,
+    ultimoDisparo: 0,
   };
 }
 
@@ -82,12 +91,33 @@ function updateMovement(id, { x, y, angle } = {}) {
 
 function createBullet(id, { x, y, angle } = {}) {
   if (!jugadores[id] || ![x, y, angle].every(Number.isFinite)) return;
-  balas.push({
-    x: x + Math.cos(angle) * MUZZLE_OFFSET,
-    y: y + Math.sin(angle) * MUZZLE_OFFSET,
-    angle,
-    ownerId: id,
-  });
+  const jugador = jugadores[id];
+  const nombreArma = jugador.inventario[jugador.slotSeleccionado] || 'puños';
+  const stats = STATS_ARMAS[nombreArma] || STATS_ARMAS['puños'];
+  const ahora = Date.now();
+
+  // Cooldown autoritativo: los mensajes que llegan demasiado pronto se ignoran.
+  if (ahora - jugador.ultimoDisparo < stats.cooldown) return;
+  jugador.ultimoDisparo = ahora;
+
+  for (let index = 0; index < stats.balas; index += 1) {
+    // Para la escopeta: -15°, 0°, +15°; un solo proyectil conserva el ángulo original.
+    const offsetGrados = stats.balas === 1
+      ? 0
+      : (index - (stats.balas - 1) / 2) * stats.dispersion;
+    const anguloBala = angle + (offsetGrados * Math.PI) / 180;
+    balas.push({
+      x: x + Math.cos(anguloBala) * MUZZLE_OFFSET,
+      y: y + Math.sin(anguloBala) * MUZZLE_OFFSET,
+      angle: anguloBala,
+      velocidad: stats.velocidad,
+      daño: stats.daño,
+      rango: stats.rango,
+      distanciaRecorrida: 0,
+      arma: nombreArma,
+      ownerId: id,
+    });
+  }
 }
 
 function selectInventorySlot(id, { slot } = {}) {
@@ -163,10 +193,13 @@ setInterval(() => {
 setInterval(() => {
   for (let index = balas.length - 1; index >= 0; index -= 1) {
     const bala = balas[index];
-    bala.x += Math.cos(bala.angle) * (BULLET_SPEED / TICK_RATE);
-    bala.y += Math.sin(bala.angle) * (BULLET_SPEED / TICK_RATE);
+    const distanciaPaso = bala.velocidad / TICK_RATE;
+    bala.x += Math.cos(bala.angle) * distanciaPaso;
+    bala.y += Math.sin(bala.angle) * distanciaPaso;
+    bala.distanciaRecorrida += distanciaPaso;
 
-    if (bala.x < 0 || bala.x > MAP_WIDTH || bala.y < 0 || bala.y > MAP_HEIGHT) {
+    if (bala.x < 0 || bala.x > MAP_WIDTH || bala.y < 0 || bala.y > MAP_HEIGHT
+      || bala.distanciaRecorrida >= bala.rango) {
       balas.splice(index, 1);
       continue;
     }
@@ -176,7 +209,7 @@ setInterval(() => {
       const jugador = jugadores[id];
       if (Math.hypot(bala.x - jugador.x, bala.y - jugador.y) <= HIT_RADIUS) {
         balas.splice(index, 1);
-        jugador.vida -= 10;
+        jugador.vida -= bala.daño;
         if (jugador.vida <= 0) respawn(jugador);
         break;
       }
