@@ -12,12 +12,27 @@
       #move-zone { left: max(24px, env(safe-area-inset-left)); }
       #aim-zone { right: max(24px, env(safe-area-inset-right)); }
       body.mobile .joystick-zone { display: block; }
+      #swap-button {
+        display: none;
+        position: fixed;
+        right: 24px;
+        bottom: max(210px, calc(210px + env(safe-area-inset-bottom)));
+        z-index: 20;
+        border: 2px solid #ffd54a;
+        border-radius: 8px;
+        padding: 12px 18px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.75);
+        font: 600 16px sans-serif;
+      }
+      body.mobile #swap-button.visible { display: block; }
     </style>
   </head>
   <body>
     <canvas id="game"></canvas>
     <div id="move-zone" class="joystick-zone" aria-label="Joystick de movimiento"></div>
     <div id="aim-zone" class="joystick-zone" aria-label="Joystick de apuntado"></div>
+    <button id="swap-button" type="button">Cambiar</button>
 
     <script src="/js/game.js"></script>
   </body>

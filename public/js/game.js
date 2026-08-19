@@ -1,5 +1,6 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+const swapButton = document.getElementById('swap-button');
 // Adaptador: el resto del juego llama a network.send/on sin conocer el transporte.
 const network = {
   id: null,
@@ -21,6 +22,7 @@ let mapHeight = 2000;
 
 // Se comprueba una vez: en móviles se añaden controles táctiles.
 const isMobile = /Android|iPhone|iPad|iPod|Mobile|IEMobile|Opera Mini/i.test(navigator.userAgent);
+if (isMobile) document.body.classList.add('mobile');
 const keys = new Set();
 const mouse = { x: 0, y: 0 };
 const movement = { x: 0, y: 0 };
@@ -157,10 +159,11 @@ resizeCanvas();
 
 // ----- Controles de PC ----------------------------------------------------
 window.addEventListener('keydown', (event) => {
-  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Digit1', 'Digit2', 'Digit3'].includes(event.code)) event.preventDefault();
+  if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Digit1', 'Digit2', 'Digit3', 'KeyE'].includes(event.code)) event.preventDefault();
   keys.add(event.code);
   const slot = { Digit1: 0, Digit2: 1, Digit3: 2 }[event.code];
   if (slot !== undefined) selectSlot(slot);
+  if (event.code === 'KeyE' && !event.repeat) attemptExchange();
 });
 window.addEventListener('keyup', (event) => keys.delete(event.code));
 window.addEventListener('blur', () => keys.clear());
@@ -222,6 +225,22 @@ canvas.addEventListener('pointerdown', (event) => {
     selectSlot(slot);
   }
 });
+
+function getNearbyLootPlatform(jugadorLocal) {
+  if (!jugadorLocal?.inventario || jugadorLocal.inventario.some((item) => item === null)) return null;
+  return plataformas.find((plataforma) => (
+    plataforma.objeto !== null
+    && Math.hypot(jugadorLocal.x - plataforma.x, jugadorLocal.y - plataforma.y) <= 55
+  )) || null;
+}
+
+function attemptExchange() {
+  const jugadorLocal = jugadores[network.id];
+  if (getNearbyLootPlatform(jugadorLocal)) network.send('intercambiar', {});
+}
+
+// En móvil, el botón solo se muestra cuando el cliente detecta una oportunidad válida.
+swapButton?.addEventListener('click', attemptExchange);
 
 /** Carga NippleJS únicamente si el dispositivo es móvil. */
 function loadNippleJS() {
@@ -431,8 +450,23 @@ function draw() {
     }
   }
 
+  // Indicador de intercambio en coordenadas del mundo, cerca del jugador local.
+  const nearbyLoot = getNearbyLootPlatform(jugadorLocal);
+  if (nearbyLoot && !isMobile) {
+    ctx.save();
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#000';
+    ctx.strokeText('Presiona E para intercambiar', jugadorLocal.x, jugadorLocal.y - 70);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('Presiona E para intercambiar', jugadorLocal.x, jugadorLocal.y - 70);
+    ctx.restore();
+  }
+
   // Restaura el contexto para que la cámara no afecte al siguiente frame.
   ctx.restore();
+  swapButton?.classList.toggle('visible', Boolean(nearbyLoot && isMobile));
   drawInventoryUI(jugadorLocal);
 }
 

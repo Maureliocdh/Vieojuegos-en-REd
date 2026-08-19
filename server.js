@@ -125,11 +125,29 @@ function selectInventorySlot(id, { slot } = {}) {
   jugadores[id].slotSeleccionado = slot;
 }
 
+/** Intercambia el objeto del slot seleccionado por el botín de una plataforma cercana. */
+function exchangeWithPlatform(id) {
+  const jugador = jugadores[id];
+  if (!jugador) return;
+
+  const plataforma = plataformas.find((candidate) => (
+    candidate.objeto !== null
+    && Math.hypot(jugador.x - candidate.x, jugador.y - candidate.y) <= PLATFORM_RADIUS
+  ));
+  if (!plataforma) return;
+
+  const slot = jugador.slotSeleccionado;
+  const objetoEnMano = jugador.inventario[slot];
+  jugador.inventario[slot] = plataforma.objeto;
+  plataforma.objeto = objetoEnMano;
+}
+
 function processClientMessage(id, message) {
   if (!message || typeof message !== 'object') return;
   if (message.type === 'movimiento') updateMovement(id, message.data);
   if (message.type === 'disparar') createBullet(id, message.data);
   if (message.type === 'cambiarSlot') selectInventorySlot(id, message.data);
+  if (message.type === 'intercambiar') exchangeWithPlatform(id);
 }
 
 if (nativeMode) {
@@ -169,6 +187,7 @@ if (nativeMode) {
     socket.on('movimiento', (data) => updateMovement(id, data));
     socket.on('disparar', (data) => createBullet(id, data));
     socket.on('cambiarSlot', (data) => selectInventorySlot(id, data));
+    socket.on('intercambiar', () => exchangeWithPlatform(id));
     socket.on('disconnect', () => removePlayer(id));
   });
 }
