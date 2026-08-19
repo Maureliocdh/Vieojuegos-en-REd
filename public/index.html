@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Juego Canvas</title>
+    <link rel="stylesheet" href="/css/style.css" />
     <style>
       * { box-sizing: border-box; }
       html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
@@ -29,11 +30,12 @@
     </style>
   </head>
   <body>
+    <div id="scoreboard" aria-label="Marcador de eliminaciones"></div>
     <canvas id="game"></canvas>
     <div id="move-zone" class="joystick-zone" aria-label="Joystick de movimiento"></div>
     <div id="aim-zone" class="joystick-zone" aria-label="Joystick de apuntado"></div>
     <button id="swap-button" type="button">Cambiar</button>
 
-    <script src="/js/game.js"></script>
+    <script src="/js/game.js?v=scoreboard"></script>
   </body>
 </html>

@@ -22,6 +22,8 @@ const STATS_ARMAS = {
   pistola: { daño: 15, rango: 1000, velocidad: 900, balas: 1, dispersion: 0, cooldown: 300 },
   escopeta: { daño: 10, rango: 700, velocidad: 650, balas: 3, dispersion: 15, cooldown: 800 },
   rifle: { daño: 25, rango: 1600, velocidad: 1200, balas: 1, dispersion: 0, cooldown: 1000 },
+  botiquin: { tipo: 'consumible', cura_vida: 50 },
+  escudo_pocion: { tipo: 'consumible', cura_escudo: 50 },
 };
 
 const MAP_WIDTH = 2000;
@@ -32,7 +34,7 @@ const MUZZLE_OFFSET = 45;
 const HIT_RADIUS = 40;
 const RESPAWN_MARGIN = 80;
 const PLATFORM_RADIUS = 55;
-const LOOT = ['pistola', 'escopeta', 'botiquin'];
+const LOOT = ['pistola', 'escopeta', 'botiquin', 'escudo_pocion'];
 
 let io;
 let wss;
@@ -70,6 +72,8 @@ function addPlayer(id) {
     y: MAP_HEIGHT / 2,
     angle: 0,
     vida: 100,
+    escudo: 0,
+    kills: 0,
     inventario: ['puños', null, null],
     slotSeleccionado: 0,
     ultimoDisparo: 0,
@@ -94,6 +98,13 @@ function createBullet(id, { x, y, angle } = {}) {
   const jugador = jugadores[id];
   const nombreArma = jugador.inventario[jugador.slotSeleccionado] || 'puños';
   const stats = STATS_ARMAS[nombreArma] || STATS_ARMAS['puños'];
+  // Los consumibles usan el mismo evento de acción, pero no crean proyectiles.
+  if (stats.tipo === 'consumible') {
+    if (stats.cura_vida) jugador.vida = Math.min(100, jugador.vida + stats.cura_vida);
+    if (stats.cura_escudo) jugador.escudo = Math.min(100, jugador.escudo + stats.cura_escudo);
+    jugador.inventario[jugador.slotSeleccionado] = null;
+    return;
+  }
   const ahora = Date.now();
 
   // Cooldown autoritativo: los mensajes que llegan demasiado pronto se ignoran.
@@ -115,6 +126,9 @@ function createBullet(id, { x, y, angle } = {}) {
       rango: stats.rango,
       distanciaRecorrida: 0,
       arma: nombreArma,
+      // ID común para Socket.IO y WebSocket nativo; se usa al confirmar una baja.
+      propietarioId: id,
+      // Alias temporal para compatibilidad con balas creadas por una versión anterior.
       ownerId: id,
     });
   }
@@ -194,6 +208,7 @@ if (nativeMode) {
 
 function respawn(jugador) {
   jugador.vida = 100;
+  jugador.escudo = 0;
   jugador.x = RESPAWN_MARGIN + Math.random() * (MAP_WIDTH - RESPAWN_MARGIN * 2);
   jugador.y = RESPAWN_MARGIN + Math.random() * (MAP_HEIGHT - RESPAWN_MARGIN * 2);
   jugador.angle = 0;
@@ -224,12 +239,22 @@ setInterval(() => {
     }
 
     for (const id in jugadores) {
-      if (id === bala.ownerId) continue;
+      const propietarioId = bala.propietarioId || bala.ownerId;
+      if (id === propietarioId) continue;
       const jugador = jugadores[id];
       if (Math.hypot(bala.x - jugador.x, bala.y - jugador.y) <= HIT_RADIUS) {
         balas.splice(index, 1);
-        jugador.vida -= bala.daño;
-        if (jugador.vida <= 0) respawn(jugador);
+        // El escudo absorbe primero el daño; solo el excedente llega a la vida.
+        const dañoAlEscudo = Math.min(jugador.escudo, bala.daño);
+        jugador.escudo -= dañoAlEscudo;
+        const dañoRestante = bala.daño - dañoAlEscudo;
+        jugador.vida -= dañoRestante;
+        jugador.escudo = Math.max(0, jugador.escudo);
+        if (jugador.vida <= 0) {
+          const propietario = jugadores[propietarioId];
+          if (propietario) propietario.kills += 1;
+          respawn(jugador);
+        }
         break;
       }
     }

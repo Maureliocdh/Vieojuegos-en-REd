@@ -1,6 +1,7 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const swapButton = document.getElementById('swap-button');
+const scoreboard = document.getElementById('scoreboard');
 // Adaptador: el resto del juego llama a network.send/on sin conocer el transporte.
 const network = {
   id: null,
@@ -20,6 +21,16 @@ let plataformas = [];
 let mapWidth = 2000;
 let mapHeight = 2000;
 
+/** Ordena el estado recibido y actualiza el marcador visible en pantalla. */
+function actualizarScoreboard(jugadoresRecibidos) {
+  const ranking = Object.entries(jugadoresRecibidos)
+    .sort(([, jugadorA], [, jugadorB]) => (jugadorB.kills || 0) - (jugadorA.kills || 0));
+
+  scoreboard.innerHTML = ranking.map(([, jugador], index) => (
+    `<div>Jugador ${index + 1}: ${jugador.kills || 0} Kills</div>`
+  )).join('');
+}
+
 // Se comprueba una vez: en móviles se añaden controles táctiles.
 const isMobile = /Android|iPhone|iPad|iPod|Mobile|IEMobile|Opera Mini/i.test(navigator.userAgent);
 if (isMobile) document.body.classList.add('mobile');
@@ -33,6 +44,8 @@ const STATS_ARMAS_CLIENTE = {
   pistola: { cooldown: 300 },
   escopeta: { cooldown: 800 },
   rifle: { cooldown: 1000 },
+  botiquin: { cooldown: 400 },
+  escudo_pocion: { cooldown: 400 },
 };
 let lastShotTime = -Infinity;
 let cooldownFeedbackUntil = 0;
@@ -50,6 +63,7 @@ const itemImages = {
   escopeta: new Image(),
   rifle: new Image(),
   botiquin: new Image(),
+  escudo_pocion: new Image(),
   puños: new Image(),
 };
 
@@ -66,6 +80,7 @@ network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelSer
   jugadores = jugadoresDelServidor;
   balas = balasDelServidor;
   plataformas = plataformasDelServidor || [];
+  actualizarScoreboard(jugadores);
 
   // Sincroniza el jugador local, especialmente tras un respawn del servidor.
   const jugadorLocal = jugadores[network.id];
@@ -141,6 +156,7 @@ platformImage.addEventListener('error', () => console.error('No se pudo cargar /
 itemImages.pistola.src = '/assets/sprites/pistola.png';
 itemImages.escopeta.src = '/assets/sprites/escopeta.png';
 itemImages.botiquin.src = '/assets/sprites/botiquin.png';
+itemImages.escudo_pocion.src = '/assets/sprites/escudo.png';
 itemImages.rifle.src = '/assets/sprites/rifle.png';
 // Se reutiliza el sprite del jugador como marcador temporal para el slot "puños".
 itemImages.puños.src = '/assets/sprites/jugador.png';
@@ -447,6 +463,16 @@ function draw() {
       ctx.fillRect(jugador.x - barWidth / 2, barY, barWidth, barHeight);
       ctx.fillStyle = '#2ecc71';
       ctx.fillRect(jugador.x - barWidth / 2, barY, barWidth * (vida / 100), barHeight);
+
+      // Segunda barra: el escudo se muestra en azul debajo de la vida.
+      const escudo = Math.max(0, Math.min(100, jugador.escudo || 0));
+      if (escudo > 0) {
+        const shieldBarY = barY + barHeight + 3;
+        ctx.fillStyle = '#263238';
+        ctx.fillRect(jugador.x - barWidth / 2, shieldBarY, barWidth, barHeight);
+        ctx.fillStyle = '#2196f3';
+        ctx.fillRect(jugador.x - barWidth / 2, shieldBarY, barWidth * (escudo / 100), barHeight);
+      }
     }
   }
 
