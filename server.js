@@ -24,6 +24,22 @@ const obstaculos = [
   { x: 1560, y: 1580, width: 240, height: 110 },
 ];
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // Configuración autoritativa: el cliente solo la replica para mostrar feedback visual.
 const STATS_ARMAS = {
   'puños': { daño: 5, rango: 80, velocidad: 500, balas: 1, dispersion: 0, cooldown: 400, capacidadCargador: 0, tiempoRecarga: 0 },
