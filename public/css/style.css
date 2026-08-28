@@ -11,17 +11,21 @@ body {
 }
 
 canvas {
-  width: min(100vw, calc(100vh * 16 / 9));
-  height: min(100vh, calc(100vw * 9 / 16));
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
   display: block;
   background: #222;
+  touch-action: none;
 }
 
 /* Marcador fijo sobre la cámara; no captura clics ni toques del juego. */
 #scoreboard {
   position: absolute;
   top: 16px;
-  right: 16px;
+  left: 16px;
   z-index: 30;
   min-width: 170px;
   padding: 10px 12px;
