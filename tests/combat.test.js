@@ -30,6 +30,27 @@ function loadGame() {
   return { game, tick: simulationTick, advance: (milliseconds) => { now += milliseconds; }, finishTimeouts: () => timeouts.splice(0).forEach((callback) => callback()) };
 }
 
+test('Arbustos: ocultan desde fuera, permiten entrar y disparar hacia fuera', () => {
+  const Buildings = require('../public/js/buildings.js');
+  const { game, tick } = loadGame();
+  const bush = game.obstaculos.find((object) => object.tipo === 'arbusto');
+  assert.ok(bush);
+  const center = { x: bush.x + bush.width / 2, y: bush.y + bush.height / 2 };
+  const outside = { x: bush.x + bush.width + 30, y: center.y };
+  assert.equal(Buildings.concealed(game.obstaculos, center, outside), true);
+  assert.equal(Buildings.concealed(game.obstaculos, center, center), false);
+  assert.equal(Buildings.concealed(game.obstaculos, outside, center), false);
+  assert.equal(Buildings.walls(bush).length, 0);
+  game.addPlayer('player'); game.unirseJugador('player', 'Oculto');
+  const player = game.jugadores.player;
+  game.moverEntidad(player, center.x, center.y);
+  assert.equal(player.x, center.x);
+  assert.equal(player.y, center.y);
+  game.createBullet('player', { ...center, angle: 0 });
+  for (let step = 0; step < 4; step += 1) tick();
+  assert.ok(game.balas.some((bullet) => bullet.x > bush.x + bush.width));
+});
+
 test('Tormenta: daño entero cada segundo, fases de 1 a 5 y protección interior', () => {
   const { game, advance, finishTimeouts } = loadGame();
   game.addPlayer('outside'); game.addPlayer('inside'); game.addPlayer('waiting');

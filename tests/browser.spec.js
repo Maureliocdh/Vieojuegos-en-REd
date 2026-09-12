@@ -229,5 +229,69 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
     return colors;
   });
   expect(rarityPixels).toEqual([[76, 168, 255], [203, 117, 244], [255, 211, 78]]);
+  const bushCheck = await page.evaluate(() => {
+    const buffer = document.createElement('canvas'); buffer.width = 200; buffer.height = 180;
+    const context = buffer.getContext('2d');
+    const bush = { tipo: 'arbusto', x: 0, y: 0, width: 190, height: 160 };
+    WorldArt.bush(context, bush, { x: -100, y: -100 });
+    const outsideAlpha = context.getImageData(95, 80, 1, 1).data[3];
+    context.clearRect(0, 0, 200, 180);
+    WorldArt.bush(context, bush, { x: 95, y: 80 });
+    const insideAlpha = context.getImageData(95, 80, 1, 1).data[3];
+    const local = jugadores[network.id];
+    const originalPosition = { x: local.x, y: local.y };
+    const actualBush = obstaculos.find((object) => object.tipo === 'arbusto');
+    const enemy = { ...local, x: actualBush.x + 95, y: actualBush.y + 80, nombre: 'Oculto' };
+    jugadores['bush-test'] = enemy;
+    const originalDrawWeapon = drawWeaponOnPlayer;
+    let visible = false;
+    drawWeaponOnPlayer = (target) => { if (target === enemy) visible = true; originalDrawWeapon(target); };
+    try {
+      Object.assign(local, { x: actualBush.x - 100, y: enemy.y });
+      draw(); const outsideVisible = visible;
+      visible = false;
+      Object.assign(local, { x: enemy.x, y: enemy.y });
+      draw(); const insideVisible = visible;
+      return { outsideAlpha, insideAlpha, outsideVisible, insideVisible };
+    } finally {
+      Object.assign(local, originalPosition);
+      delete jugadores['bush-test'];
+      drawWeaponOnPlayer = originalDrawWeapon;
+      draw();
+    }
+  });
+  expect(bushCheck.outsideAlpha).toBe(255);
+  expect(bushCheck.insideAlpha).toBeGreaterThan(50);
+  expect(bushCheck.insideAlpha).toBeLessThan(80);
+  expect(bushCheck.outsideVisible).toBe(false);
+  expect(bushCheck.insideVisible).toBe(true);
+  const resultMusic = await page.evaluate(() => {
+    const results = [];
+    const originalMusic = playResultMusic;
+    playResultMusic = (victory) => { results.push(victory); originalMusic(victory); };
+    try {
+      gameStarted = true;
+      network.receive('finDeJuego', [{ id: network.id, nombre: 'Podio', kills: 10 }]);
+      const victoryNotes = resultNotes.size;
+      network.receive('finDeJuego', [{ id: network.id, nombre: 'Podio', kills: 10 }]);
+      network.receive('reinicioPartida');
+      const resetNotes = resultNotes.size;
+      gameStarted = true;
+      network.receive('finDeJuego', [{ id: 'otro-id', nombre: jugadores[network.id].nombre, kills: 10 }]);
+      const defeatNotes = resultNotes.size;
+      const mutedBefore = ArenaUI.muted;
+      ArenaUI.muted = true; updateAudioLevels();
+      const mutedGain = masterGain.gain.value;
+      ArenaUI.muted = mutedBefore; updateAudioLevels();
+      network.receive('reinicioPartida');
+      network.receive('finDeJuego', []);
+      return { results, victoryNotes, defeatNotes, resetNotes, mutedGain };
+    } finally { playResultMusic = originalMusic; stopResultMusic(); }
+  });
+  expect(resultMusic.results).toEqual([true, false]);
+  expect(resultMusic.victoryNotes).toBe(20);
+  expect(resultMusic.defeatNotes).toBe(14);
+  expect(resultMusic.resetNotes).toBe(0);
+  expect(resultMusic.mutedGain).toBe(0);
   expect(errors).toEqual([]);
 });

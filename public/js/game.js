@@ -68,6 +68,36 @@ let audioCtx = null;
 let masterGain = null;
 let effectsGain = null;
 let ambientGain = null;
+const resultNotes = new Set();
+function stopResultMusic() {
+  for (const oscillator of resultNotes) oscillator.stop();
+  resultNotes.clear();
+}
+function playResultMusic(victory) {
+  stopResultMusic();
+  try {
+    const context = getAudioCtx();
+    const melody = victory ? [60, 64, 67, 72, 67, 72, 76, 79, 76, 72] : [64, 62, 60, 59, 57, 55, 52];
+    const beat = victory ? 0.24 : 0.48;
+    melody.forEach((note, index) => {
+      for (const offset of [0, -12]) {
+        const oscillator = context.createOscillator();
+        const envelope = context.createGain();
+        const start = context.currentTime + index * beat;
+        const duration = index === melody.length - 1 ? 1.5 : beat * 0.9;
+        oscillator.type = offset === 0 ? 'triangle' : 'sine';
+        oscillator.frequency.value = 440 * 2 ** ((note + offset - 69) / 12);
+        oscillator.connect(envelope); envelope.connect(effectsGain);
+        envelope.gain.setValueAtTime(0, start);
+        envelope.gain.linearRampToValueAtTime(offset === 0 ? 0.16 : 0.07, start + 0.02);
+        envelope.gain.exponentialRampToValueAtTime(0.001, start + duration);
+        oscillator.onended = () => { oscillator.disconnect(); envelope.disconnect(); resultNotes.delete(oscillator); };
+        resultNotes.add(oscillator);
+        oscillator.start(start); oscillator.stop(start + duration);
+      }
+    });
+  } catch { stopResultMusic(); }
+}
 function updateAudioLevels() {
   if (!audioCtx) return;
   masterGain.gain.value = ArenaUI.muted || document.hidden ? 0 : ArenaUI.master;
@@ -208,6 +238,7 @@ network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, obstaculos: obstaculosDelServ
 });
 
 network.on('inicioPartida', ({ tiempoRestante }) => {
+  stopResultMusic();
   gameStarted = true;
   gameFinished = false;
   tiempoPartida = tiempoRestante ?? 120;
@@ -228,6 +259,7 @@ network.on('finDeJuego', (podio) => {
   setGameVisibility(false);
   updateAudioLevels();
   podiumList.replaceChildren();
+  playResultMusic(podio.some((jugador) => jugador.id === network.id));
   podio.forEach((jugador, index) => {
     const item = document.createElement('li');
     item.textContent = `${index + 1}. ${jugador.nombre} - ${jugador.kills} Kills`;
@@ -237,6 +269,7 @@ network.on('finDeJuego', (podio) => {
 });
 
 network.on('reinicioPartida', () => {
+  stopResultMusic();
   gameStarted = false;
   gameFinished = false;
   tiempoPartida = 120;
@@ -266,16 +299,21 @@ network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelSer
     const escudoAnterior = prevEscudos[id] ?? jugador.escudo;
     const deltaVida = vidaAnterior - jugador.vida;
     const deltaEscudo = escudoAnterior - jugador.escudo;
+    if (Buildings.concealed(obstaculos, jugador, jugadores[network.id])) {
+      prevVidas[id] = jugador.vida;
+      prevEscudos[id] = jugador.escudo;
+      continue;
+    }
 
     if (Math.round(deltaVida) > 0 && !jugador.muerto) {
-      floatingNumbers.push({ x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 30, valor: `-${Math.round(deltaVida)}`, color: '#ef5350', nacido: ahora, vida: 1000 });
+      floatingNumbers.push({ playerId: id, x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 30, valor: `-${Math.round(deltaVida)}`, color: '#ef5350', nacido: ahora, vida: 1000 });
       if (id === network.id) { startShake(6, 200); vibrar(40); playHit(); }
     }
     if (Math.round(deltaEscudo) > 0 && !jugador.muerto) {
-      floatingNumbers.push({ x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 48, valor: `-${Math.round(deltaEscudo)}🛡`, color: '#42a5f5', nacido: ahora, vida: 1000 });
+      floatingNumbers.push({ playerId: id, x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 48, valor: `-${Math.round(deltaEscudo)}🛡`, color: '#42a5f5', nacido: ahora, vida: 1000 });
     }
     if (deltaVida < 0) {
-      floatingNumbers.push({ x: jugador.x, y: jugador.y - 30, valor: `+${Math.round(-deltaVida)}❤`, color: '#2ecc71', nacido: ahora, vida: 1000 });
+      floatingNumbers.push({ playerId: id, x: jugador.x, y: jugador.y - 30, valor: `+${Math.round(-deltaVida)}❤`, color: '#2ecc71', nacido: ahora, vida: 1000 });
     }
     prevVidas[id] = jugador.vida;
     prevEscudos[id] = jugador.escudo;
@@ -977,6 +1015,7 @@ function drawMinimap() {
   // ---- Enemigos detectados por disparo ----
   for (const [id, jugador] of Object.entries(jugadores)) {
     if (id === network.id || jugador.muerto) continue;
+    if (Buildings.concealed(obstaculos, jugador, jugadores[network.id])) continue;
     // ultimoDisparo viene del servidor en ms epoch (Date.now())
     const tiempoDesdeDisparo = ahora - (jugador.ultimoDisparo || 0);
     if (tiempoDesdeDisparo > MINIMAP_SHOT_WINDOW) continue;
@@ -1076,6 +1115,7 @@ function updateAndDrawFloatingNumbers() {
     const fn = floatingNumbers[i];
     const elapsed = ahora - fn.nacido;
     if (elapsed > fn.vida) { floatingNumbers.splice(i, 1); continue; }
+    if (Buildings.concealed(obstaculos, jugadores[fn.playerId] || fn, jugadorLocal)) continue;
     const alpha = 1 - elapsed / fn.vida;
     const sx = fn.x - jugadorLocal.x + window.innerWidth / 2;
     const sy = fn.y - jugadorLocal.y + window.innerHeight / 2 - elapsed * 0.06;
@@ -1319,6 +1359,8 @@ function draw() {
     ctx.fillStyle = '#e6c55d'; ctx.fillRect(cofre.x - 4, cofre.y - 5, 8, 12);
   }
 
+  for (const bush of obstaculos.filter((object) => object.tipo === 'arbusto')) WorldArt.bush(ctx, bush, jugadores[network.id]);
+
   // Todas las balas provienen del estado enviado por el servidor.
   // Balas: usa imagen si cargó, si no dibuja un círculo simple
   for (const bala of balas) {
@@ -1343,6 +1385,7 @@ function draw() {
   for (const id in jugadores) {
     const jugador = jugadores[id];
     if (jugador.muerto || !jugador.unido) continue;
+    if (Buildings.concealed(obstaculos, jugador, jugadores[network.id])) continue;
 
     ctx.save();
     ctx.translate(jugador.x, jugador.y);

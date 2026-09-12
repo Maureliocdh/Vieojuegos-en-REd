@@ -55,6 +55,13 @@ for (let index = 0; index < 160; index += 1) {
   if (plataformas.some((plataforma) => Math.hypot(plataforma.x - objeto.x, plataforma.y - objeto.y) < 180)) continue;
   obstaculos.push(objeto);
 }
+for (let index = 0; index < 100; index += 1) {
+  const bush = { id: `arbusto-${index}`, tipo: 'arbusto', x: 220 + (index * 733) % 5500,
+    y: 280 + (index * 1091) % 5500, width: 190, height: 160 };
+  if (obstaculos.some((object) => bush.x < object.x + object.width + 40 && bush.x + bush.width + 40 > object.x
+    && bush.y < object.y + object.height + 40 && bush.y + bush.height + 40 > object.y)) continue;
+  obstaculos.push(bush);
+}
 // Items sueltos tirados por jugadores: { id, x, y, item }
 const itemsEnSuelo = [];
 let nextItemId = 1;
@@ -215,10 +222,11 @@ function finalizarPartida() {
   if (temporizadorZona) { clearTimeout(temporizadorZona); temporizadorZona = null; }
   temporizadorPartida = null;
 
-  const podio = Object.values(jugadores)
-    .sort((a, b) => (b.kills || 0) - (a.kills || 0))
+  const podio = Object.entries(jugadores)
+    .filter(([, jugador]) => jugador.unido)
+    .sort(([, first], [, second]) => (second.kills || 0) - (first.kills || 0))
     .slice(0, 3)
-    .map((jugador) => ({ nombre: jugador.nombre, kills: jugador.kills || 0 }));
+    .map(([id, jugador]) => ({ id, nombre: jugador.nombre, kills: jugador.kills || 0 }));
   broadcast('finDeJuego', podio);
 
   setTimeout(() => {
@@ -714,6 +722,7 @@ function actualizarBots() {
     for (const [id, candidato] of Object.entries(jugadores)) {
       // Ahora los bots pueden elegir como objetivo a humanos u otros bots.
       if (id === botId || !candidato.unido || candidato.muerto || candidato.vida <= 0) continue;
+      if (Buildings.concealed(obstaculos, candidato, bot)) continue;
       const distancia = Math.hypot(candidato.x - bot.x, candidato.y - bot.y);
       if (distancia < distanciaObjetivo) {
         distanciaObjetivo = distancia;

@@ -5,9 +5,17 @@
   const tree = makeImage(GameAssets.svgUrl('<ellipse cx="49" cy="56" rx="42" ry="37" fill="#1f462d" opacity=".3"/><path d="M44 57h12v31H44z" fill="#665c42"/><path d="M12 42L23 18 47 6 75 17 87 43 74 72 47 80 20 65Z" fill="#306343" stroke="#234a35" stroke-width="3"/><path d="M21 36L38 15 63 17 77 36 67 58 39 64 20 52Z" fill="#498450"/><path d="M31 32L45 19 64 26 68 39 47 46 29 42Z" fill="#639c5b"/>'));
   const rock = makeImage(GameAssets.svgUrl('<path d="M9 63L18 30 44 14 72 23 89 54 78 80 35 87Z" fill="#546a67" stroke="#384e4b" stroke-width="3"/><path d="M18 30L44 14 72 23 64 53 36 65 9 63Z" fill="#a2b3a3"/><path d="M18 30L42 25 55 40 36 65Z" fill="#bec8b4"/>'));
   let floorPattern = null;
+  const bushImage = makeImage(GameAssets.svgUrl('<g stroke="#24482b" stroke-width="3"><ellipse cx="48" cy="49" rx="46" ry="44" fill="#315d35"/><ellipse cx="28" cy="43" rx="23" ry="27" fill="#54883f"/><ellipse cx="62" cy="34" rx="28" ry="25" fill="#66964a"/><ellipse cx="62" cy="66" rx="28" ry="23" fill="#497d3b"/><path d="M18 37l12-7m14-9l10 8m13 18l12-4M27 61l10 8m12-14l8 6" stroke="#9fbf63" stroke-width="5" stroke-linecap="round"/></g>'));
   const roofOpacity = new Map();
   window.WorldArt = {
     images,
+    bush(context, object, observer) {
+      if (!bushImage.complete || !bushImage.naturalWidth) return;
+      context.save();
+      context.globalAlpha = Buildings.inBush(object, observer) ? 0.25 : 1;
+      context.drawImage(bushImage, object.x, object.y, object.width, object.height);
+      context.restore();
+    },
     terrain(context, image, width, height) {
       if (!floorPattern && image.complete && image.naturalWidth) floorPattern = context.createPattern(image, 'repeat');
       context.fillStyle = floorPattern || '#75a75a';
@@ -31,6 +39,7 @@
       context.restore();
     },
     obstacle(context, obstacle) {
+      if (obstacle.tipo === 'arbusto') return;
       const { x, y, width, height, tipo } = obstacle;
       if (tipo === 'arbol' || tipo === 'roca') {
         const image = tipo === 'arbol' ? tree : rock;

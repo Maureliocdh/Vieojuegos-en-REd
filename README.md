@@ -173,6 +173,12 @@ La progresión se reinicia en cada ronda. Antes de la primera reducción no hay 
 
 ## Armas y Munición
 
+### Arbustos
+
+Puedes entrar en los arbustos para esconderte. Desde dentro, el follaje se muestra al 25 % de opacidad; desde fuera, otros jugadores no ven tu personaje, arma, nombre, barras ni marca del minimapa. Quienes estén dentro del mismo arbusto pueden verse entre sí. Los bots tampoco detectan objetivos ocultos desde fuera.
+
+Los arbustos no bloquean el movimiento ni las balas: puedes disparar desde dentro y los demás verán los proyectiles sin que tu personaje se revele. No ofrecen protección contra disparos ni contra la tormenta. Esta ocultación se aplica al renderizado y a la selección de objetivos de los bots; no es una protección antitrampas contra clientes modificados que inspeccionen el estado de red.
+
 En el menú puedes elegir **0, 5, 11, 15 o 20 bots** (11 por defecto). La preferencia se guarda en el navegador. Quien inicia la ronda fija la cantidad para todos; el selector queda bloqueado hasta la siguiente ronda. Con 0 bots solo participan jugadores humanos.
 
 Las armas disparan mientras mantienes pulsado el clic izquierdo o desplazado el joystick derecho, respetando su cadencia. Solo el rifle dispara rápido: **3 disparos por segundo**. La pistola tiene una pausa de **0,65 s** entre disparos; la escopeta, **1,2 s**; y el sniper, **1,4 s**. Soltar el botón detiene el disparo. La recarga sigue siendo manual.
@@ -276,7 +282,35 @@ Vieojuegos-en-REd/
 | El juego muestra una versión anterior | Reinicia el servidor tras cambiar código de servidor y recarga la página con `Ctrl+F5`. |
 | Falla Playwright | Instala Chromium y comprueba que 3410 y 3411 estén libres. |
 
+## Gestión de Assets
+
+Los gráficos del jugador, las armas y buena parte del mapa combinan **SVG generados desde JavaScript con dibujo en Canvas 2D**, sin depender de un paquete externo de sprites para esos elementos.
+
+### Jugadores
+
+En [public/js/assets.js](public/js/assets.js), cada skin define sus colores, detalles y accesorios. `skinUrl()` genera la imagen SVG para el menú o la partida. Las imágenes se cargan y reutilizan, en lugar de regenerarlas en cada fotograma.
+
+Las manos se dibujan aparte en [public/js/game.js](public/js/game.js), con los colores de la skin. Esto permite orientarlas hacia la mira y animar los golpes independientemente del cuerpo.
+
+### Mapa
+
+En [public/js/world.js](public/js/world.js), árboles y rocas son imágenes SVG reutilizadas. El suelo emplea una textura repetida mediante `createPattern()`, mientras que caminos, edificios, muebles, puertas y techos se dibujan con Canvas. Los techos se vuelven transparentes al entrar en un edificio.
+
+Las colisiones se calculan mediante geometría, no a partir de los píxeles de las imágenes. [public/js/buildings.js](public/js/buildings.js) comparte la geometría de paredes y puertas entre cliente y servidor.
+
+### Armas y Objetos
+
+`itemUrl()` en [public/js/assets.js](public/js/assets.js) genera las imágenes de armas, munición y consumibles. Se reutilizan en el inventario, en el suelo y al mostrar el objeto equipado. La rareza se distingue mediante bordes y etiquetas de color, sin necesitar tres imágenes distintas de cada arma.
+
+### Carga y Multijugador
+
+Los SVG generados se convierten en URLs `data:image/svg+xml` y se cargan como objetos `Image` para dibujarlos en Canvas. Por la red viajan identificadores y estado, como skin, arma, rareza y posición; **las imágenes no se envían en cada actualización de la partida**.
+
+Este enfoque facilita modificar colores y diseños desde código. Para incorporar arte más detallado, se pueden sustituir los SVG por PNG o spritesheets adaptando la carga y el renderizado, sin cambiar las reglas del juego.
+
 ## Recursos y Alcance
+
+Al finalizar una partida, los tres integrantes del podio escuchan una melodía de victoria; los demás participantes escuchan una de derrota. Son melodías originales sintetizadas con Web Audio, sin archivos de música externos. Respetan el volumen general, el volumen de efectos y el silencio. No se reproducen para quienes permanecen en el menú y se detienen al reiniciar la ronda.
 
 Las nuevas skins, iconos de armas, consumibles y textura de terreno son originales de este proyecto; no se extrajeron personajes ni recursos de ZombsRoyale. Se conservan algunos sprites anteriores del repositorio, cuya procedencia debe revisarse antes de redistribuirlos. Lucide proporciona iconos de interfaz y NippleJS los joysticks; sus licencias acompañan a los paquetes.
 
