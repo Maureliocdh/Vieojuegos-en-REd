@@ -3,11 +3,20 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "start:nativo": "node server.js --nativo",
+    "test": "node --test tests/*.test.js",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "express": "^4.21.2",
+    "lucide": "^1.45.0",
+    "nipplejs": "^0.10.2",
     "socket.io": "^4.8.1",
     "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "socket.io-client": "^4.8.3"
   }
 }

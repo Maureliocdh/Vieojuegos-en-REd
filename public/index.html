@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Juego Canvas</title>
+    <title>OUTPOST | Arena en red</title>
     <link rel="stylesheet" href="/css/style.css" />
     <style>
       * { box-sizing: border-box; }
@@ -47,10 +47,22 @@
   <body>
     <div id="pantalla-inicio">
       <div class="panel-inicio">
-        <h1>Videojuegos en Red</h1>
-        <label for="nickname">Nickname</label>
-        <input id="nickname" type="text" maxlength="16" autocomplete="nickname" placeholder="Escribe tu nombre" />
-        <button id="jugar-button" type="button">Jugar</button>
+        <header class="lobby-header"><strong>O+</strong><span>ARENA EN RED</span><button class="icon-button settings-trigger" type="button" title="Ajustes de sonido" aria-label="Ajustes de sonido"><i data-lucide="settings-2"></i></button></header>
+        <main class="lobby-layout">
+          <section class="lobby-title"><p class="eyebrow">TEMPORADA 01 / TIERRA ABIERTA</p><h1>OUTPOST<span>ARENA</span></h1><p class="match-tag">TODOS CONTRA TODOS <b>02:00</b></p></section>
+          <section class="operator-stage" aria-label="Operador seleccionado"><div class="orbit-ring"></div><img id="skin-preview" alt="" width="360" height="360" /><div class="operator-caption"><span id="skin-role"></span><h2 id="skin-name"></h2></div></section>
+          <section class="loadout">
+            <div class="section-heading"><h2>Tu operador</h2><span>06 / DISPONIBLES</span></div>
+            <div id="skin-picker" role="group" aria-label="Seleccionar skin"></div>
+            <div class="match-settings">
+              <label for="match-kills">Bajas para ganar<select id="match-kills"><option value="5">5 bajas</option><option value="10" selected>10 bajas</option><option value="20">20 bajas</option><option value="30">30 bajas</option></select></label>
+              <label for="match-duration">Tiempo máximo<select id="match-duration"><option value="60">1 minuto</option><option value="120" selected>2 minutos</option><option value="180">3 minutos</option><option value="300">5 minutos</option></select></label>
+            </div>
+            <label for="nickname">Nombre de jugador</label><input id="nickname" type="text" maxlength="16" autocomplete="nickname" placeholder="Tu nombre" />
+            <button id="jugar-button" type="button" disabled><span>Jugar ahora</span><i data-lucide="arrow-right"></i></button><p id="connection-status" role="status">Conectando con la arena...</p>
+          </section>
+        </main>
+        <footer class="lobby-footer"><span>ISLA 01 <b>OUTPOST</b></span><span>10 BAJAS PARA GANAR</span><span id="transport-label">EN LÍNEA</span></footer>
       </div>
     </div>
     <div id="pantalla-fin">
@@ -69,6 +81,13 @@
     <button id="drop-button" type="button">Tirar</button>
     <button id="grenade-button" type="button">💣</button>
 
-    <script src="/js/game.js?v=scoreboard"></script>
+    <button id="game-settings" class="icon-button settings-trigger" type="button" title="Ajustes de sonido" aria-label="Ajustes de sonido" hidden><i data-lucide="settings-2"></i></button>
+    <dialog id="sound-dialog" aria-labelledby="sound-title"><form method="dialog"><div class="section-heading"><h2 id="sound-title">Sonido</h2><button class="icon-button" title="Cerrar" aria-label="Cerrar"><i data-lucide="x"></i></button></div><label for="volume-master">Volumen general <output id="value-master"></output></label><input id="volume-master" type="range" min="0" max="100" /><label for="volume-effects">Efectos <output id="value-effects"></output></label><input id="volume-effects" type="range" min="0" max="100" /><label for="volume-ambient">Ambiente <output id="value-ambient"></output></label><input id="volume-ambient" type="range" min="0" max="100" /><label class="mute-row" for="mute-audio"><span>Silenciar todo</span><input id="mute-audio" type="checkbox" /></label></form></dialog>
+    <script src="/vendor/lucide.js"></script>
+    <script src="/js/assets.js"></script>
+    <script src="/js/buildings.js"></script>
+    <script src="/js/lobby.js"></script>
+    <script src="/js/world.js"></script>
+    <script src="/js/game.js"></script>
   </body>
 </html>

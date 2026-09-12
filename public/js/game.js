@@ -28,6 +28,9 @@ let plataformas = [];
 let obstaculos = [];
 let itemsEnSuelo = [];
 let granadosEnVuelo = [];
+let cofres = [];
+const rarityColors = ['#4ca8ff', '#cb75f4', '#ffd34e'];
+const rarityNames = ['BASE', 'ÉPICA', 'LEGENDARIA'];
 let zonaSegura = { x: 3000, y: 3000, radio: 9000 };
 let mapWidth = 6000;
 let mapHeight = 6000;
@@ -62,8 +65,37 @@ const explosiones = []; // { x, y, radio, maxRadio, alfa, nacido }
 
 // ---- Web Audio ----
 let audioCtx = null;
+let masterGain = null;
+let effectsGain = null;
+let ambientGain = null;
+function updateAudioLevels() {
+  if (!audioCtx) return;
+  masterGain.gain.value = ArenaUI.muted || document.hidden ? 0 : ArenaUI.master;
+  effectsGain.gain.value = ArenaUI.effects;
+  ambientGain.gain.value = gameStarted ? ArenaUI.ambient * 0.025 : 0;
+}
+window.addEventListener('audio-settings', updateAudioLevels);
+document.addEventListener('visibilitychange', updateAudioLevels);
 function getAudioCtx() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    effectsGain = audioCtx.createGain();
+    ambientGain = audioCtx.createGain();
+    effectsGain.connect(masterGain);
+    ambientGain.connect(masterGain);
+    masterGain.connect(audioCtx.destination);
+    const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 3, audioCtx.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let index = 0; index < samples.length; index += 1) samples[index] = Math.random() * 2 - 1;
+    const breeze = audioCtx.createBufferSource();
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass'; filter.frequency.value = 550;
+    breeze.buffer = buffer; breeze.loop = true;
+    breeze.connect(filter); filter.connect(ambientGain); breeze.start();
+    updateAudioLevels();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   return audioCtx;
 }
 function playTone(frecuencia, tipo, duracion, volumen = 0.18) {
@@ -72,7 +104,7 @@ function playTone(frecuencia, tipo, duracion, volumen = 0.18) {
     const osc = ctx2.createOscillator();
     const gain = ctx2.createGain();
     osc.connect(gain);
-    gain.connect(ctx2.destination);
+    gain.connect(effectsGain);
     osc.type = tipo;
     osc.frequency.value = frecuencia;
     gain.gain.setValueAtTime(volumen, ctx2.currentTime);
@@ -95,26 +127,30 @@ function vibrar(ms = 60) {
 /** Ordena el estado recibido y actualiza el marcador visible en pantalla. */
 function actualizarScoreboard(jugadoresRecibidos) {
   const ranking = Object.entries(jugadoresRecibidos)
+    .filter(([, jugador]) => jugador.unido)
     .sort(([, jugadorA], [, jugadorB]) => (jugadorB.kills || 0) - (jugadorA.kills || 0));
 
-  scoreboard.innerHTML = ranking.map(([, jugador], index) => (
-    `<div>${jugador.nombre || `Jugador ${index + 1}`}: ${jugador.kills || 0} Kills</div>`
-  )).join('');
+  scoreboard.replaceChildren(...ranking.slice(0, isMobile ? 3 : 8).map(([, jugador], index) => {
+    const row = document.createElement('div');
+    row.textContent = `${jugador.nombre || `Jugador ${index + 1}`}: ${jugador.kills || 0}`;
+    return row;
+  }));
 }
 
 // Se comprueba una vez: en móviles se añaden controles táctiles.
-const isMobile = /Android|iPhone|iPad|iPod|Mobile|IEMobile|Opera Mini/i.test(navigator.userAgent);
+const isMobile = matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 if (isMobile) document.body.classList.add('mobile');
 const keys = new Set();
 const mouse = { x: 0, y: 0 };
 const movement = { x: 0, y: 0 };
-const aim = { x: 1, y: 0 };
+const aim = { x: 0, y: 0 };
 // Réplica local de cooldowns para feedback inmediato; el servidor sigue siendo autoritativo.
 const STATS_ARMAS_CLIENTE = {
   'puños': { cooldown: 400, capacidadCargador: 0 },
   pistola: { cooldown: 300, capacidadCargador: 12 },
   escopeta: { cooldown: 800, capacidadCargador: 6 },
   rifle: { cooldown: 1000, capacidadCargador: 30 },
+  sniper: { cooldown: 1400, capacidadCargador: 5 },
   botiquin: { cooldown: 400 },
   escudo_pocion: { cooldown: 400 },
   granada: { cooldown: 1500 },
@@ -127,7 +163,7 @@ let fullStatMessageUntil = 0;
 let fullStatMessage = '';
 
 const player = {
-  x: window.innerWidth / 2, y: window.innerHeight / 2, angle: 0, speed: 350,
+  x: window.innerWidth / 2, y: window.innerHeight / 2, angle: 0, speed: 400,
   image: new Image(),
 };
 const bulletImage = new Image();
@@ -137,6 +173,7 @@ const itemImages = {
   pistola: new Image(),
   escopeta: new Image(),
   rifle: new Image(),
+  sniper: new Image(),
   botiquin: new Image(),
   escudo_pocion: new Image(),
   puños: new Image(),
@@ -145,6 +182,23 @@ const itemImages = {
 
 network.on('identidad', ({ id }) => {
   network.id = id;
+});
+
+network.on('configPartida', (rules) => {
+  const locked = rules.activa || rules.finalizada;
+  for (const [id, field] of [['match-kills', 'limiteKills'], ['match-duration', 'duracion']]) {
+    const select = document.getElementById(id);
+    select.disabled = locked;
+    select.value = locked ? rules[field] : ArenaUI[field];
+  }
+  document.querySelector('.lobby-footer > span:nth-child(2)').textContent = `${rules.limiteKills} BAJAS PARA GANAR`;
+  document.querySelector('.match-tag b').textContent = `${String(rules.duracion / 60).padStart(2, '0')}:00`;
+  if (rules.finalizada) {
+    playButton.disabled = true;
+    document.getElementById('connection-status').textContent = 'Ronda terminada. Preparando la siguiente...';
+  } else if (rules.activa && !gameStarted) {
+    document.getElementById('connection-status').textContent = 'Partida en curso';
+  }
 });
 
 network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, obstaculos: obstaculosDelServidor }) => {
@@ -160,6 +214,7 @@ network.on('inicioPartida', ({ tiempoRestante }) => {
   inicioScreen.style.display = 'none';
   finishScreen.style.display = 'none';
   setGameVisibility(true);
+  updateAudioLevels();
 });
 
 network.on('tiempoPartida', (tiempo) => {
@@ -167,9 +222,11 @@ network.on('tiempoPartida', (tiempo) => {
 });
 
 network.on('finDeJuego', (podio) => {
+  if (!gameStarted) { gameFinished = true; playButton.disabled = true; return; }
   gameStarted = false;
   gameFinished = true;
   setGameVisibility(false);
+  updateAudioLevels();
   podiumList.replaceChildren();
   podio.forEach((jugador, index) => {
     const item = document.createElement('li');
@@ -186,11 +243,12 @@ network.on('reinicioPartida', () => {
   setGameVisibility(false);
   finishScreen.style.display = 'none';
   inicioScreen.style.display = 'flex';
-  nicknameInput.value = '';
-  playButton.disabled = false;
+  nicknameInput.value = ArenaUI.name;
+  playButton.disabled = !networkReady;
 });
 
-network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor }) => {
+network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor, cofres: cofresServidor }) => {
+  cofres = cofresServidor || [];
   const jugadoresAnteriores = jugadores;
   jugadores = jugadoresDelServidor;
   balas = balasDelServidor;
@@ -209,11 +267,11 @@ network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelSer
     const deltaVida = vidaAnterior - jugador.vida;
     const deltaEscudo = escudoAnterior - jugador.escudo;
 
-    if (deltaVida > 0 && !jugador.muerto) {
+    if (Math.round(deltaVida) > 0 && !jugador.muerto) {
       floatingNumbers.push({ x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 30, valor: `-${Math.round(deltaVida)}`, color: '#ef5350', nacido: ahora, vida: 1000 });
       if (id === network.id) { startShake(6, 200); vibrar(40); playHit(); }
     }
-    if (deltaEscudo > 0 && !jugador.muerto) {
+    if (Math.round(deltaEscudo) > 0 && !jugador.muerto) {
       floatingNumbers.push({ x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 48, valor: `-${Math.round(deltaEscudo)}🛡`, color: '#42a5f5', nacido: ahora, vida: 1000 });
     }
     if (deltaVida < 0) {
@@ -278,15 +336,19 @@ async function connectNetwork() {
   try {
     const response = await fetch('/modo');
     const { modo } = await response.json();
+    document.getElementById('transport-label').textContent = modo === 'nativo' ? 'WEBSOCKET NATIVO' : 'SOCKET.IO';
 
     if (modo === 'socket.io') {
       await loadSocketIoClient();
       const socket = window.io();
       network.send = (type, data) => socket.emit(type, data);
-      socket.on('connect', () => { network.id = socket.id; networkReady = true; });
+      socket.on('connect', () => { network.id = socket.id; setConnectionState(true); });
+      socket.on('disconnect', () => setConnectionState(false));
+      socket.on('connect_error', () => setConnectionState(false));
       for (const type of [
         'configMapa', 'estadoJuego', 'jugadorDesconectado', 'inicioPartida',
         'tiempoPartida', 'finDeJuego', 'reinicioPartida', 'kill', 'explosion', 'zonaActualizada',
+        'configPartida',
       ]) {
         socket.on(type, (data) => network.receive(type, data));
       }
@@ -296,7 +358,9 @@ async function connectNetwork() {
       network.send = (type, data) => {
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type, data }));
       };
-      socket.addEventListener('open', () => { networkReady = true; });
+      socket.addEventListener('open', () => setConnectionState(true));
+      socket.addEventListener('close', () => { setConnectionState(false); setTimeout(connectNetwork, 1500); });
+      socket.addEventListener('error', () => setConnectionState(false));
       socket.addEventListener('message', (event) => {
         try {
           const { type, data } = JSON.parse(event.data);
@@ -309,14 +373,32 @@ async function connectNetwork() {
       throw new Error(`Modo de red no reconocido: ${modo}`);
     }
   } catch (error) {
+    setConnectionState(false);
     console.error('No se pudo conectar al servidor:', error);
   }
 }
 
 connectNetwork();
 
+function setConnectionState(ready) {
+  networkReady = ready;
+  playButton.disabled = !ready || gameFinished;
+  document.getElementById('connection-status').textContent = ready ? 'Arena disponible' : 'Sin conexión. Reconectando...';
+  if (!ready) {
+    gameStarted = false;
+    keys.clear();
+    Object.assign(movement, { x: 0, y: 0 });
+    Object.assign(aim, { x: 0, y: 0 });
+    setGameVisibility(false);
+    inicioScreen.style.display = 'flex';
+    updateAudioLevels();
+  }
+}
+
 function setGameVisibility(visible) {
-  const elements = [canvas, scoreboard, swapButton, reloadButton, respawnMessage,
+  document.getElementById('game-settings').hidden = !visible;
+  const elements = [scoreboard, swapButton, reloadButton, respawnMessage,
+    document.getElementById('drop-button'), document.getElementById('grenade-button'),
     document.getElementById('move-zone'), document.getElementById('aim-zone')];
   elements.forEach((element) => {
     if (element) element.style.display = visible ? '' : 'none';
@@ -325,9 +407,13 @@ function setGameVisibility(visible) {
 
 playButton.addEventListener('click', () => {
   const nombre = nicknameInput.value.trim();
-  if (!nombre || !networkReady || gameStarted || gameFinished) return;
+  if (!nombre) { nicknameInput.focus(); document.getElementById('connection-status').textContent = 'Escribe tu nombre para entrar'; return; }
+  if (!networkReady || gameStarted || gameFinished) return;
+  try { getAudioCtx(); } catch {}
   playButton.disabled = true;
-  network.send('unirse', { nombre });
+  network.send('unirse', { nombre, skin: ArenaUI.skin,
+    limiteKills: Number(document.getElementById('match-kills').value),
+    duracion: Number(document.getElementById('match-duration').value) });
 });
 
 nicknameInput.addEventListener('keydown', (event) => {
@@ -339,21 +425,15 @@ player.image.src = '/assets/sprites/jugador.png';
 player.image.addEventListener('error', () => console.error('No se pudo cargar /assets/sprites/jugador.png'));
 bulletImage.src = '/assets/sprites/bala.png';
 bulletImage.addEventListener('error', () => console.error('No se pudo cargar /assets/sprites/bala.png'));
-floorImage.src = '/assets/tiles/suelo.png';
-floorImage.addEventListener('error', () => console.error('No se pudo cargar /assets/tiles/suelo.png'));
+floorImage.src = '/assets/tiles/grass.svg';
+floorImage.addEventListener('error', () => console.error('No se pudo cargar /assets/tiles/grass.svg'));
 const obstacleImage = new Image();
 obstacleImage.src = '/assets/sprites/caja.png';
 obstacleImage.addEventListener('error', () => console.error('No se pudo cargar /assets/sprites/caja.png'));
 platformImage.src = '/assets/sprites/plataforma.png';
 platformImage.addEventListener('error', () => console.error('No se pudo cargar /assets/sprites/plataforma.png'));
-itemImages.pistola.src = '/assets/sprites/pistola.png';
-itemImages.escopeta.src = '/assets/sprites/escopeta.png';
-itemImages.botiquin.src = '/assets/sprites/botiquin.png';
-itemImages.escudo_pocion.src = '/assets/sprites/escudo.png';
-itemImages.rifle.src = '/assets/sprites/rifle.png';
-itemImages.granada.src = '/assets/sprites/granada.png';
-// Se reutiliza el sprite del jugador como marcador temporal para el slot "puños".
-itemImages.puños.src = '/assets/sprites/jugador.png';
+for (const type of ['pistola', 'rifle', 'sniper', 'escopeta']) itemImages[`ammo_${type}`] = new Image();
+for (const [item, image] of Object.entries(itemImages)) image.src = GameAssets.itemUrl(item);
 
 /** Ajusta el búfer para pantallas retina sin cambiar las coordenadas del juego. */
 function resizeCanvas() {
@@ -472,7 +552,7 @@ function dropCurrentItem() {
   if (!jugadorLocal || jugadorLocal.muerto) return;
   const slot = jugadorLocal.slotSeleccionado;
   const item = jugadorLocal.inventario?.[slot];
-  if (!item) return;
+  if (!item || item === 'puños') return;
   // Optimistic: vaciamos localmente para feedback inmediato.
   jugadorLocal.inventario[slot] = null;
   network.send('tirarItem', { slot });
@@ -491,11 +571,11 @@ function selectSlot(slot) {
 }
 
 function getInventorySlotAt(screenX, screenY) {
-  const size = 56;
+  const size = isMobile ? 44 : 56;
   const gap = 8;
   const totalWidth = size * 5 + gap * 4;
   const startX = (window.innerWidth - totalWidth) / 2;
-  const startY = window.innerHeight - size - 24;
+  const startY = window.innerHeight - size - (isMobile ? 12 : 24);
   if (screenY < startY || screenY > startY + size) return null;
   const slot = Math.floor((screenX - startX) / (size + gap));
   const slotX = startX + slot * (size + gap);
@@ -514,6 +594,7 @@ canvas.addEventListener('pointerdown', (event) => {
 
 function getNearbyLootPlatform(jugadorLocal) {
   if (!jugadorLocal || jugadorLocal.muerto || !jugadorLocal.inventario
+    || jugadorLocal.inventario[jugadorLocal.slotSeleccionado] === 'puños'
     || jugadorLocal.inventario.some((item) => item === null)) return null;
   return plataformas.find((plataforma) => (
     plataforma.objeto !== null
@@ -536,7 +617,19 @@ function actualizarMensajeRespawn(jugadorLocal) {
 function attemptExchange() {
   if (!gameStarted || gameFinished) return;
   const jugadorLocal = jugadores[network.id];
-  if (getNearbyLootPlatform(jugadorLocal)) network.send('intercambiar', {});
+  if (getNearbyChest(jugadorLocal) || getNearbyDoor(jugadorLocal) || getNearbyLootPlatform(jugadorLocal)) network.send('intercambiar', {});
+}
+
+function getNearbyChest(jugador) {
+  return jugador && !jugador.muerto ? cofres.find((cofre) => !cofre.abierto && Math.hypot(jugador.x - cofre.x, jugador.y - cofre.y) <= 105) : null;
+}
+
+function getNearbyDoor(jugadorLocal) {
+  if (!jugadorLocal || jugadorLocal.muerto) return null;
+  return obstaculos.filter(Buildings.isBuilding).map((building) => {
+    const door = Buildings.door(building);
+    return { building, distance: Math.hypot(jugadorLocal.x - door.x - door.width / 2, jugadorLocal.y - door.y - door.height / 2) };
+  }).filter((candidate) => candidate.distance <= 105).sort((left, right) => left.distance - right.distance)[0]?.building || null;
 }
 
 // En móvil, el botón solo se muestra cuando el cliente detecta una oportunidad válida.
@@ -549,7 +642,7 @@ document.getElementById('grenade-button')?.addEventListener('click', throwGrenad
 function loadNippleJS() {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js';
+    script.src = '/vendor/nipplejs.js';
     script.onload = resolve;
     script.onerror = () => reject(new Error('No se pudo cargar NippleJS'));
     document.head.appendChild(script);
@@ -558,7 +651,7 @@ function loadNippleJS() {
 
 function createMobileControls() {
   document.body.classList.add('mobile');
-  const options = { mode: 'static', color: '#fff', size: 120, restOpacity: 0.45 };
+  const options = { mode: 'static', position: { left: '50%', top: '50%' }, color: '#fff', size: 100, restOpacity: 0.45 };
   const moveStick = nipplejs.create({ zone: document.getElementById('move-zone'), ...options });
   moveStick.on('move', (_event, data) => {
     movement.x = data.vector.x;
@@ -580,6 +673,7 @@ function createMobileControls() {
 if (isMobile) loadNippleJS().then(createMobileControls).catch(console.error);
 
 function update(deltaSeconds) {
+  if (document.getElementById('sound-dialog').open) return;
   let moveX = movement.x;
   let moveY = movement.y;
   if (!isMobile) {
@@ -597,7 +691,7 @@ function update(deltaSeconds) {
   }
 
   if (isMobile) {
-    if (Math.hypot(aim.x, aim.y) > 0.05) player.angle = Math.atan2(aim.y, aim.x);
+    if (Math.hypot(aim.x, aim.y) > 0.05) { player.angle = Math.atan2(aim.y, aim.x); shoot(); }
   } else {
     // Con la cámara centrada en el jugador, el cursor se mide desde el centro de pantalla.
     player.angle = Math.atan2(mouse.y - window.innerHeight / 2, mouse.x - window.innerWidth / 2);
@@ -608,7 +702,16 @@ function update(deltaSeconds) {
 }
 
 /** Dibuja un icono de objeto centrado; si su sprite aún no carga, muestra su nombre. */
-function drawItemIcon(item, x, y, size) {
+function drawItemIcon(item, x, y, size, rarity = null) {
+  if (rarity !== null && STATS_ARMAS_CLIENTE[item]?.capacidadCargador) {
+    ctx.save();
+    ctx.fillStyle = rarityColors[rarity] + '44';
+    ctx.strokeStyle = rarityColors[rarity];
+    ctx.lineWidth = 2;
+    ctx.fillRect(x - size / 2 - 3, y - size / 2 - 3, size + 6, size + 6);
+    ctx.strokeRect(x - size / 2 - 3, y - size / 2 - 3, size + 6, size + 6);
+    ctx.restore();
+  }
   const image = itemImages[item];
   if (image?.complete && image.naturalWidth) {
     ctx.drawImage(image, x - size / 2, y - size / 2, size, size);
@@ -622,30 +725,47 @@ function drawItemIcon(item, x, y, size) {
 
 /** Superpone el arma seleccionada sobre la dirección de las manos del personaje. */
 function drawWeaponOnPlayer(jugador) {
-  const arma = jugador.inventario?.[jugador.slotSeleccionado];
-  if (!arma || arma === 'puños') return;
+  const arma = jugador.inventario?.[jugador.slotSeleccionado] || 'puños';
   const image = itemImages[arma];
-  if (!image?.complete || !image.naturalWidth) return;
-
-  const offset = 28;
+  const skin = GameAssets.skins.find((candidate) => candidate.id === jugador.skin) || GameAssets.skins[0];
+  const punchAge = Date.now() - (jugador.ultimoDisparo || 0);
+  const reach = arma === 'puños' && punchAge >= 0 && punchAge < 180
+    ? Math.sin(punchAge / 180 * Math.PI) * 12 : 0;
   ctx.save();
-  ctx.translate(
-    jugador.x + Math.cos(jugador.angle) * offset,
-    jugador.y + Math.sin(jugador.angle) * offset,
-  );
+  ctx.translate(jugador.x, jugador.y);
   ctx.rotate(jugador.angle);
-  ctx.drawImage(image, -24, -12, 48, 24);
+  if (arma !== 'puños' && image?.complete && image.naturalWidth) {
+    const size = ['botiquin', 'escudo_pocion', 'granada'].includes(arma) ? 38 : 58;
+    ctx.drawImage(image, 28 - size / 2, -size / 2, size, size);
+  }
+  for (const side of [-1, 1]) {
+    const handX = arma === 'puños' ? 23 + (side === 1 ? reach : 0) : (side === 1 ? 20 : 36);
+    const handY = side * (arma === 'puños' ? 17 : 9);
+    ctx.fillStyle = skin.color;
+    ctx.strokeStyle = '#162c32';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(handX - 10, handY - 7, 18, 14, 5);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = skin.accent;
+    ctx.fillRect(handX - 8, handY - 5, 4, 10);
+    ctx.strokeStyle = skin.accent;
+    ctx.beginPath();
+    ctx.moveTo(handX + 3, handY - 3);
+    ctx.lineTo(handX + 3, handY + 3);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
 /** UI de inventario: se llama después de restaurar la cámara, en coordenadas de pantalla. */
 function drawInventoryUI(jugadorLocal) {
-  const size = 56;
+  const size = isMobile ? 44 : 56;
   const gap = 8;
   const SLOTS = 5;
   const totalWidth = size * SLOTS + gap * (SLOTS - 1);
   const startX = (window.innerWidth - totalWidth) / 2;
-  const startY = window.innerHeight - size - 24;
+  const startY = window.innerHeight - size - (isMobile ? 12 : 24);
   const inventario = jugadorLocal.inventario || Array(SLOTS).fill(null);
 
   for (let slot = 0; slot < SLOTS; slot += 1) {
@@ -656,9 +776,11 @@ function drawInventoryUI(jugadorLocal) {
       && performance.now() < cooldownFeedbackUntil;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.fillRect(x, startY, size, size);
-    ctx.strokeStyle = cooldownError ? '#ef3340' : (selected ? '#ffd54a' : '#ffffff');
+    const rareza = jugadorLocal.rarezas?.[slot] || 0;
+    ctx.strokeStyle = cooldownError ? '#ef3340' : STATS_ARMAS_CLIENTE[inventario[slot]]?.capacidadCargador ? rarityColors[rareza] : '#ffffff';
     ctx.lineWidth = selected ? 4 : 2;
     ctx.strokeRect(x, startY, size, size);
+    if (selected) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(x - 4, startY - 4, size + 8, size + 8); }
     if (inventario[slot]) drawItemIcon(inventario[slot], x + size / 2, startY + size / 2, 36);
 
     ctx.fillStyle = '#ffffff';
@@ -675,14 +797,19 @@ function drawAmmoUI(jugadorLocal) {
 
   ctx.save();
   ctx.textAlign = 'center';
+  if (arma === 'puños') {
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('PUÑOS EQUIPADOS', window.innerWidth / 2, window.innerHeight - (isMobile ? 66 : 96));
+  }
 
   if (stats?.capacidadCargador) {
     ctx.font = 'bold 16px sans-serif';
     ctx.fillStyle = '#fff';
     ctx.fillText(
-      `Balas: ${jugadorLocal.balasEnCargador || 0} / ${stats.capacidadCargador}`,
+      `${arma.toUpperCase()} ${rarityNames[jugadorLocal.rarezas?.[jugadorLocal.slotSeleccionado] || 0]}  ${jugadorLocal.balasEnCargador || 0} / ${jugadorLocal.reservas?.[arma] || 0}`,
       window.innerWidth / 2,
-      window.innerHeight - 96,
+      window.innerHeight - (isMobile ? 66 : 96),
     );
     if (jugadorLocal.recargando) {
       ctx.font = 'bold 30px sans-serif';
@@ -692,7 +819,7 @@ function drawAmmoUI(jugadorLocal) {
     if (noAmmoMessageUntil > ahora) {
       ctx.font = 'bold 20px sans-serif';
       ctx.fillStyle = '#ffcc80';
-      ctx.fillText('Sin balas. Presiona R para recargar', window.innerWidth / 2, window.innerHeight - 122);
+      ctx.fillText('Sin munición', window.innerWidth / 2, window.innerHeight - (isMobile ? 86 : 122));
     }
   }
 
@@ -703,7 +830,7 @@ function drawAmmoUI(jugadorLocal) {
     ctx.font = 'bold 18px sans-serif';
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 3;
-    const texto = isMobile ? '💣 Pulsa el botón 💣 para lanzar' : '💣 Presiona F para lanzar la granada';
+    const texto = 'Granada equipada';
     ctx.strokeText(texto, window.innerWidth / 2, window.innerHeight - 96);
     ctx.fillStyle = '#8bc34a';
     ctx.fillText(texto, window.innerWidth / 2, window.innerHeight - 96);
@@ -779,11 +906,11 @@ function drawConsumeAnim() {
 const MINIMAP_SHOT_WINDOW = 2000; // ms que dura la detección tras un disparo
 
 function drawMinimap() {
-  const MM_W = 180;
-  const MM_H = 180;
+  const MM_W = isMobile ? 76 : 160;
+  const MM_H = MM_W;
   const MM_PADDING = 14;
-  const mx = MM_PADDING;
-  const my = window.innerHeight - MM_H - MM_PADDING;
+  const mx = isMobile && window.innerHeight >= 500 ? window.innerWidth - MM_W - 12 : MM_PADDING;
+  const my = isMobile ? 70 : window.innerHeight - MM_H - MM_PADDING;
   const scaleX = MM_W / mapWidth;
   const scaleY = MM_H / mapHeight;
   const ahora = Date.now();
@@ -807,6 +934,11 @@ function drawMinimap() {
   // Suelo
   ctx.fillStyle = '#2a3a2a';
   ctx.fillRect(mx, my, MM_W, MM_H);
+  ctx.strokeStyle = '#a9ebf0';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(mx + zonaSegura.x * scaleX, my + zonaSegura.y * scaleY, zonaSegura.radio * scaleX, 0, Math.PI * 2);
+  ctx.stroke();
 
   // Obstáculos
   ctx.fillStyle = '#7a6a4a';
@@ -1016,10 +1148,15 @@ function drawZonaSegura(camX, camY) {
   ctx.save();
   ctx.fillStyle = 'rgba(200,20,20,0.18)';
   ctx.beginPath();
+  ctx.rect(0, 0, window.innerWidth, window.innerHeight);
+  ctx.clip();
+  ctx.beginPath();
   // Rectángulo exterior (sentido horario)
   ctx.rect(0, 0, window.innerWidth, window.innerHeight);
   // Círculo interior (sentido antihorario = hueco con evenodd)
+  ctx.moveTo(sx + r, sy);
   ctx.arc(sx, sy, r, 0, Math.PI * 2, true);
+  ctx.closePath();
   ctx.fill('evenodd');
   ctx.restore();
 
@@ -1083,7 +1220,7 @@ function drawRedVignette(jugadorLocal) {
 
 function drawMatchTimer() {
   ctx.save();
-  ctx.font = 'bold 22px sans-serif';
+  ctx.font = `bold ${isMobile ? 16 : 22}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.fillStyle = tiempoPartida <= 10 ? '#ff5252' : '#fff';
   const minutos = Math.floor(tiempoPartida / 60);
@@ -1097,7 +1234,7 @@ function draw() {
   ctx.fillStyle = '#20242b';
   ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
-  const jugadorLocal = jugadores[network.id] || player;
+  const jugadorLocal = gameStarted ? (jugadores[network.id] || player) : { x: 1250, y: 1050 };
   const { sx: shakeX, sy: shakeY } = getShakeOffset();
   ctx.save();
   ctx.translate(window.innerWidth / 2 - jugadorLocal.x + shakeX, window.innerHeight / 2 - jugadorLocal.y + shakeY);
@@ -1107,26 +1244,14 @@ function draw() {
   ctx.beginPath();
   ctx.rect(0, 0, mapWidth, mapHeight);
   ctx.clip();
-  if (floorImage.complete && floorImage.naturalWidth) {
-    for (let x = 0; x < mapWidth; x += floorImage.naturalWidth) {
-      for (let y = 0; y < mapHeight; y += floorImage.naturalHeight) {
-        ctx.drawImage(floorImage, x, y);
-      }
-    }
-  } else {
-    ctx.fillStyle = '#334334';
-    ctx.fillRect(0, 0, mapWidth, mapHeight);
-  }
+  WorldArt.terrain(ctx, floorImage, mapWidth, mapHeight);
   ctx.restore();
 
   // Obstáculos estáticos: se dibujan antes de plataformas, balas y jugadores.
   for (const obstaculo of obstaculos) {
-    if (obstacleImage.complete && obstacleImage.naturalWidth) {
-      ctx.drawImage(obstacleImage, obstaculo.x, obstaculo.y, obstaculo.width, obstaculo.height);
-    } else {
-      ctx.fillStyle = '#555';
-      ctx.fillRect(obstaculo.x, obstaculo.y, obstaculo.width, obstaculo.height);
-    }
+    if (Math.abs(obstaculo.x - jugadorLocal.x) > window.innerWidth / 2 + obstaculo.width
+      || Math.abs(obstaculo.y - jugadorLocal.y) > window.innerHeight / 2 + obstaculo.height) continue;
+    WorldArt.obstacle(ctx, obstaculo);
   }
 
   // Borde del mundo: ayuda a comprobar visualmente dónde no se puede avanzar.
@@ -1147,7 +1272,7 @@ function draw() {
       ctx.fillRect(plataforma.x - 28, plataforma.y - 14, 56, 28);
     }
     // El objeto se eleva visualmente sobre la plataforma.
-    if (plataforma.objeto) drawItemIcon(plataforma.objeto, plataforma.x, plataforma.y - 42, 38);
+    if (plataforma.objeto) drawItemIcon(plataforma.objeto, plataforma.x, plataforma.y - 42, 38, plataforma.rareza || 0);
   }
 
   // Items tirados en el suelo: pequeño icono con brillo parpadeante.
@@ -1161,16 +1286,27 @@ function draw() {
     ctx.arc(drop.x, drop.y, 22, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
-    drawItemIcon(drop.item, drop.x, drop.y, 32);
+    drawItemIcon(drop.item, drop.x, drop.y, 32, drop.rareza || 0);
     // Etiqueta
     ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'center';
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 2.5;
-    ctx.strokeText(drop.item, drop.x, drop.y + 26);
+    const dropLabel = drop.item.startsWith('ammo_') ? `+${drop.cantidad} ${drop.item.slice(5)}` : `${drop.item}${STATS_ARMAS_CLIENTE[drop.item]?.capacidadCargador ? ' ' + rarityNames[drop.rareza || 0] : ''}`;
+    ctx.strokeText(dropLabel, drop.x, drop.y + 26);
     ctx.fillStyle = '#ffd54a';
-    ctx.fillText(drop.item, drop.x, drop.y + 26);
+    ctx.fillText(dropLabel, drop.x, drop.y + 26);
     ctx.restore();
+  }
+
+  for (const cofre of cofres) {
+    ctx.fillStyle = cofre.abierto ? '#506960' : '#815636';
+    ctx.strokeStyle = '#e6c55d'; ctx.lineWidth = 3;
+    ctx.fillRect(cofre.x - 25, cofre.y - 18, 50, 36);
+    ctx.strokeRect(cofre.x - 25, cofre.y - 18, 50, 36);
+    ctx.fillStyle = cofre.abierto ? '#1d342e' : '#e6c55d';
+    ctx.fillRect(cofre.x - 20, cofre.y - 13, 40, cofre.abierto ? 17 : 5);
+    ctx.fillStyle = '#e6c55d'; ctx.fillRect(cofre.x - 4, cofre.y - 5, 8, 12);
   }
 
   // Todas las balas provienen del estado enviado por el servidor.
@@ -1196,13 +1332,14 @@ function draw() {
   const SPRITE_R = 20; // radio para el fallback sin sprite
   for (const id in jugadores) {
     const jugador = jugadores[id];
-    if (jugador.muerto) continue;
+    if (jugador.muerto || !jugador.unido) continue;
 
     ctx.save();
     ctx.translate(jugador.x, jugador.y);
     ctx.rotate(jugador.angle);
-    if (player.image.complete && player.image.naturalWidth) {
-      ctx.drawImage(player.image, -player.image.naturalWidth / 2, -player.image.naturalHeight / 2);
+    const skinImage = WorldArt.images[jugador.skin] || WorldArt.images.pulse;
+    if (skinImage.complete && skinImage.naturalWidth) {
+      ctx.drawImage(skinImage, -32, -32, 64, 64);
     } else {
       // Fallback: círculo de color con línea indicando dirección
       ctx.fillStyle = jugador.esBot ? '#ffb74d' : (id === network.id ? '#4fc3f7' : '#ef5350');
@@ -1223,8 +1360,7 @@ function draw() {
     ctx.restore();
     drawWeaponOnPlayer(jugador);
 
-    const spriteHalfH = (player.image.complete && player.image.naturalWidth)
-      ? player.image.naturalHeight / 2 : SPRITE_R;
+    const spriteHalfH = 30;
 
     // Etiqueta con nombre/BOT
     ctx.save();
@@ -1260,15 +1396,18 @@ function draw() {
 
   // Indicador de intercambio en coordenadas del mundo, cerca del jugador local.
   const nearbyLoot = getNearbyLootPlatform(jugadorLocal);
-  if (nearbyLoot && !isMobile) {
+  const nearbyDoor = getNearbyDoor(jugadorLocal);
+  const nearbyChest = getNearbyChest(jugadorLocal);
+  const interactionLabel = nearbyChest ? 'Abrir cofre' : nearbyDoor ? (nearbyDoor.puertaAbierta ? 'Cerrar puerta' : 'Abrir puerta') : 'Intercambiar';
+  if (nearbyLoot && !nearbyDoor && !isMobile) {
     ctx.save();
     ctx.font = 'bold 18px sans-serif';
     ctx.textAlign = 'center';
     ctx.lineWidth = 4;
     ctx.strokeStyle = '#000';
-    ctx.strokeText('Presiona E para intercambiar', jugadorLocal.x, jugadorLocal.y - 70);
+    ctx.strokeText(`${interactionLabel} [E]`, jugadorLocal.x, jugadorLocal.y - 70);
     ctx.fillStyle = '#fff';
-    ctx.fillText('Presiona E para intercambiar', jugadorLocal.x, jugadorLocal.y - 70);
+    ctx.fillText(`${interactionLabel} [E]`, jugadorLocal.x, jugadorLocal.y - 70);
     ctx.restore();
   }
 
@@ -1276,7 +1415,7 @@ function draw() {
   if (!isMobile) {
     const jl = jugadores[network.id];
     const itemActual = jl?.inventario?.[jl?.slotSeleccionado];
-    if (itemActual) {
+    if (itemActual && itemActual !== 'puños') {
       ctx.save();
       ctx.font = '14px sans-serif';
       ctx.textAlign = 'center';
@@ -1315,10 +1454,25 @@ function draw() {
     ctx.restore();
   }
 
+  for (const building of obstaculos.filter(Buildings.isBuilding)) WorldArt.roof(ctx, building, jugadorLocal);
+  if (nearbyDoor || nearbyChest) {
+    ctx.save();
+    ctx.font = 'bold 15px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#10251f';
+    ctx.fillStyle = '#f2ffb2';
+    const prompt = isMobile ? interactionLabel : `${interactionLabel} [E]`;
+    ctx.strokeText(prompt, jugadorLocal.x, jugadorLocal.y - 96);
+    ctx.fillText(prompt, jugadorLocal.x, jugadorLocal.y - 96);
+    ctx.restore();
+  }
+
   // Restaura el contexto para que la cámara no afecte al siguiente frame.
   ctx.restore();
 
   // ---- Efectos de pantalla (coordenadas de pantalla, sin cámara) ----
+  if (!gameStarted) return;
   const camX = jugadorLocal.x;
   const camY = jugadorLocal.y;
   drawZonaSegura(camX, camY);
@@ -1327,12 +1481,16 @@ function draw() {
   drawRedVignette(jugadores[network.id]);
 
   actualizarMensajeRespawn(jugadorLocal);
-  swapButton?.classList.toggle('visible', Boolean(nearbyLoot && isMobile));
+  document.getElementById('drop-button').disabled = !jugadorLocal.inventario?.[jugadorLocal.slotSeleccionado]
+    || jugadorLocal.inventario[jugadorLocal.slotSeleccionado] === 'puños';
+  swapButton?.classList.toggle('visible', Boolean((nearbyLoot || nearbyDoor || nearbyChest) && isMobile));
+  swapButton.title = interactionLabel;
+  swapButton.setAttribute('aria-label', interactionLabel);
   drawInventoryUI(jugadorLocal);
   drawAmmoUI(jugadorLocal);
   drawConsumeAnim();
   drawMatchTimer();
-  drawKillFeed();
+  if (!isMobile) drawKillFeed();
   updateAndDrawFloatingNumbers();
   drawMinimap();
 }
@@ -1353,3 +1511,14 @@ function gameLoop(currentTime) {
   requestAnimationFrame(gameLoop);
 }
 requestAnimationFrame(gameLoop);
+setGameVisibility(false);
+for (const [id, icon, label] of [['reload-button', 'rotate-cw', 'Recargar'], ['drop-button', 'package-open', 'Soltar objeto'], ['grenade-button', 'circle-dot', 'Lanzar granada'], ['swap-button', 'arrow-left-right', 'Intercambiar']]) {
+  const button = document.getElementById(id);
+  button.replaceChildren();
+  const symbol = document.createElement('i');
+  symbol.dataset.lucide = icon;
+  button.append(symbol);
+  button.title = label;
+  button.setAttribute('aria-label', label);
+}
+window.lucide?.createIcons();
