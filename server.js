@@ -62,9 +62,9 @@ let nextItemId = 1;
 // Configuración autoritativa: el cliente solo la replica para mostrar feedback visual.
 const STATS_ARMAS = {
   'puños': { daño: 5, rango: 80, velocidad: 500, balas: 1, dispersion: 0, cooldown: 400, capacidadCargador: 0, tiempoRecarga: 0 },
-  pistola: { daño: 15, rango: 1000, velocidad: 900, balas: 1, dispersion: 0, cooldown: 300, capacidadCargador: 12, tiempoRecarga: 1200 },
-  escopeta: { daño: 10, rango: 700, velocidad: 650, balas: 3, dispersion: 15, cooldown: 800, capacidadCargador: 6, tiempoRecarga: 1800 },
-  rifle: { daño: 25, rango: 1600, velocidad: 1200, balas: 1, dispersion: 0, cooldown: 1000, capacidadCargador: 30, tiempoRecarga: 1500 },
+  pistola: { daño: 15, rango: 1000, velocidad: 900, balas: 1, dispersion: 0, cooldown: 650, capacidadCargador: 12, tiempoRecarga: 1200 },
+  escopeta: { daño: 10, rango: 700, velocidad: 650, balas: 3, dispersion: 15, cooldown: 1200, capacidadCargador: 6, tiempoRecarga: 1800 },
+  rifle: { daño: 25, rango: 1600, velocidad: 1200, balas: 1, dispersion: 0, cooldown: 1000 / 3, capacidadCargador: 30, tiempoRecarga: 1500 },
   sniper: { daño: 65, rango: 2400, velocidad: 1800, balas: 1, dispersion: 0, cooldown: 1400, capacidadCargador: 5, tiempoRecarga: 2200 },
   botiquin: { tipo: 'consumible', cura_vida: 50 },
   escudo_pocion: { tipo: 'consumible', cura_escudo: 50 },
@@ -97,7 +97,7 @@ const LOOT = ['pistola', 'escopeta', 'botiquin', 'escudo_pocion', 'rifle', 'snip
 // Dificultad moderada: persiguen más despacio y solo atacan a distancia cercana.
 const BOT_SPEED = 80;
 const BOT_ATTACK_RANGE = 300;
-const BOT_COUNT = 11;
+let cantidadBots = 11;
 const RESPAWN_COOLDOWN = 3000;
 let partidaEnCurso = false;
 let partidaFinalizada = false;
@@ -154,13 +154,21 @@ function broadcast(type, data) {
 }
 
 function reglasPartida() {
-  return { limiteKills, duracion: duracionPartida, activa: partidaEnCurso, finalizada: partidaFinalizada };
+  return { limiteKills, duracion: duracionPartida, cantidadBots, activa: partidaEnCurso, finalizada: partidaFinalizada };
 }
 
 function iniciarPartida(opciones = {}) {
   if (partidaEnCurso || partidaFinalizada) return;
   limiteKills = [5, 10, 20, 30].includes(opciones.limiteKills) ? opciones.limiteKills : 10;
   duracionPartida = [60, 120, 180, 300].includes(opciones.duracion) ? opciones.duracion : 120;
+  const nuevosBots = [0, 5, 11, 15, 20].includes(opciones.cantidadBots) ? opciones.cantidadBots : 11;
+  if (nuevosBots !== cantidadBots) {
+    for (const [id, jugador] of Object.entries(jugadores)) {
+      if (jugador.esBot) delete jugadores[id];
+    }
+    cantidadBots = nuevosBots;
+    for (let index = 1; index <= cantidadBots; index += 1) generarBot(`bot${index}`);
+  }
   partidaEnCurso = true;
   tiempoRestante = duracionPartida;
   broadcast('configPartida', reglasPartida());
@@ -585,7 +593,7 @@ function processClientMessage(id, message, client = null) {
 }
 
 // Los bots existen desde el arranque y aparecen en el mismo objeto que los jugadores.
-for (let index = 1; index <= BOT_COUNT; index += 1) generarBot(`bot${index}`);
+for (let index = 1; index <= cantidadBots; index += 1) generarBot(`bot${index}`);
 
 if (nativeMode) {
   // En modo nativo NO se carga Socket.IO: ws se acopla al mismo servidor HTTP.

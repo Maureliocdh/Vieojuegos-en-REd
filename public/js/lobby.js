@@ -7,6 +7,7 @@
     name: typeof saved.name === 'string' ? saved.name.slice(0, 16) : '',
     limiteKills: [5, 10, 20, 30].includes(saved.limiteKills) ? saved.limiteKills : 10,
     duracion: [60, 120, 180, 300].includes(saved.duracion) ? saved.duracion : 120,
+    cantidadBots: [0, 5, 11, 15, 20].includes(saved.cantidadBots) ? saved.cantidadBots : 11,
     master: volume(saved.master, 0.65), effects: volume(saved.effects, 0.7), ambient: volume(saved.ambient, 0.25), muted: saved.muted === true,
     save() { try { localStorage.setItem('outpost-settings', JSON.stringify(this)); } catch {} },
   };
@@ -36,7 +37,7 @@
     picker.append(button);
   }
   selectSkin(ui.skin);
-  for (const [id, field] of [['match-kills', 'limiteKills'], ['match-duration', 'duracion']]) {
+  for (const [id, field] of [['match-kills', 'limiteKills'], ['match-duration', 'duracion'], ['match-bots', 'cantidadBots']]) {
     const select = document.getElementById(id);
     select.value = ui[field];
     select.addEventListener('change', () => { ui[field] = Number(select.value); ui.save(); });

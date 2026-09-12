@@ -12,6 +12,7 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
   if (await page.locator('#match-kills').isEnabled()) {
     await page.locator('#match-kills').selectOption('20');
     await page.locator('#match-duration').selectOption('180');
+    await page.locator('#match-bots').selectOption('5');
   }
   await page.getByRole('button', { name: 'Ajustes de sonido' }).click();
   await page.locator('#volume-master').fill('35');
@@ -24,6 +25,7 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
   await expect(page.locator('#nickname')).toHaveValue('Prueba móvil');
   await expect(page.locator('#volume-master')).toHaveValue('35');
   await expect(page.locator('#mute-audio')).toBeChecked();
+  await expect(page.locator('#match-bots')).toHaveValue('5');
   await page.screenshot({ path: testInfo.outputPath('lobby.png'), fullPage: true });
   const lobbyFit = await page.evaluate(() => {
     const heading = document.querySelector('.lobby-title h1');
@@ -35,9 +37,39 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
   await expect(spectator.getByRole('button', { name: 'Jugar ahora' })).toBeEnabled();
   await page.getByRole('button', { name: 'Jugar ahora' }).click();
   await expect(page.locator('#pantalla-inicio')).toBeHidden();
+  await page.waitForFunction(() => Boolean(jugadores[network.id]));
+  const heldFire = await page.evaluate(() => {
+    if (isMobile) return null;
+    const originalSend = network.send;
+    const shots = [];
+    network.send = (type) => { if (type === 'disparar') shots.push(performance.now()); };
+    try {
+      lastShotTime = -10000;
+      canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
+      const immediate = shots.length;
+      update(0);
+      const duringCooldown = shots.length;
+      lastShotTime = -10000;
+      update(0);
+      const held = shots.length;
+      window.dispatchEvent(new MouseEvent('mouseup', { button: 0 }));
+      lastShotTime = -10000;
+      update(0);
+      const released = shots.length;
+      canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
+      window.dispatchEvent(new Event('blur'));
+      lastShotTime = -10000;
+      update(0);
+      return { immediate, duringCooldown, held, released, blurred: shots.length };
+    } finally { network.send = originalSend; fireHeld = false; }
+  });
+  if (heldFire) expect(heldFire).toEqual({ immediate: 1, duringCooldown: 1, held: 2, released: 2, blurred: 3 });
   await expect(spectator.locator('#pantalla-inicio')).toBeVisible();
   await expect(spectator.locator('#match-kills')).toBeDisabled();
   await expect(spectator.locator('#match-duration')).toBeDisabled();
+  await expect(spectator.locator('#match-bots')).toBeDisabled();
+  await expect(spectator.locator('#match-bots')).toHaveValue('5');
+  await page.waitForFunction(() => Object.values(jugadores).filter((jugador) => jugador.esBot).length === 5);
   await expect(spectator.locator('#match-kills')).toHaveValue('20');
   await expect(spectator.locator('#match-duration')).toHaveValue('180');
   await page.waitForFunction(() => jugadores[network.id]?.skin === 'ronin');

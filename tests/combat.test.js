@@ -227,6 +227,23 @@ test('Sniper: daño y cadencia; una puerta cerrada detiene el proyectil', () => 
   assert.equal(game.balas.length, 1);
 });
 
+test('Rifle permite tres disparos por segundo y supera la cadencia de pistola', () => {
+  for (const [weapon, expected] of [['rifle', 9], ['pistola', 5], ['escopeta', 3]]) {
+    const { game, advance } = loadGame();
+    game.addPlayer('player'); game.unirseJugador('player', 'Jugador');
+    const player = game.jugadores.player;
+    player.inventario[1] = weapon;
+    player.municionPorSlot[1] = 30;
+    game.equiparArma(player);
+    for (let elapsed = 0; elapsed < 3000; elapsed += 1) {
+      game.createBullet('player', { x: player.x, y: player.y, angle: 0 });
+      advance(1);
+    }
+    assert.equal(game.balas.length, expected * (weapon === 'escopeta' ? 3 : 1));
+    assert.equal(player.balasEnCargador, 30 - expected);
+  }
+});
+
 test('Equipo inicial y reaparición dan pistola 12/24 y conservan puños', () => {
   const { game, advance } = loadGame();
   game.addPlayer('player'); game.unirseJugador('player', 'Jugador');

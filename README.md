@@ -132,7 +132,7 @@ La arena incluye once bots. Tras una eliminación, reapareces a los tres segundo
 | :--- | :--- |
 | Moverse | `W`, `A`, `S`, `D` |
 | Apuntar | Ratón |
-| Disparar, golpear o usar el consumible equipado | Clic izquierdo |
+| Disparar, golpear o usar el consumible equipado | Clic izquierdo; mantener pulsado para disparar armas continuamente |
 | Seleccionar hueco de inventario | `1` a `5` |
 | Abrir o cerrar una puerta cercana | `E` |
 | Intercambiar con una plataforma, si no hay una puerta cercana | `E` |
@@ -172,6 +172,10 @@ Fuera del círculo seguro, la tormenta quita vida directamente una vez por segun
 La progresión se reinicia en cada ronda. Antes de la primera reducción no hay daño. Las rondas cortas pueden terminar antes de alcanzar las últimas fases.
 
 ## Armas y Munición
+
+En el menú puedes elegir **0, 5, 11, 15 o 20 bots** (11 por defecto). La preferencia se guarda en el navegador. Quien inicia la ronda fija la cantidad para todos; el selector queda bloqueado hasta la siguiente ronda. Con 0 bots solo participan jugadores humanos.
+
+Las armas disparan mientras mantienes pulsado el clic izquierdo o desplazado el joystick derecho, respetando su cadencia. Solo el rifle dispara rápido: **3 disparos por segundo**. La pistola tiene una pausa de **0,65 s** entre disparos; la escopeta, **1,2 s**; y el sniper, **1,4 s**. Soltar el botón detiene el disparo. La recarga sigue siendo manual.
 
 Al entrar y en cada reaparición recibes **una pistola base equipada, 12 balas en el cargador y 24 de reserva**. Conservas los puños en el primer hueco.
 

@@ -147,9 +147,9 @@ const aim = { x: 0, y: 0 };
 // Réplica local de cooldowns para feedback inmediato; el servidor sigue siendo autoritativo.
 const STATS_ARMAS_CLIENTE = {
   'puños': { cooldown: 400, capacidadCargador: 0 },
-  pistola: { cooldown: 300, capacidadCargador: 12 },
-  escopeta: { cooldown: 800, capacidadCargador: 6 },
-  rifle: { cooldown: 1000, capacidadCargador: 30 },
+  pistola: { cooldown: 650, capacidadCargador: 12 },
+  escopeta: { cooldown: 1200, capacidadCargador: 6 },
+  rifle: { cooldown: 1000 / 3, capacidadCargador: 30 },
   sniper: { cooldown: 1400, capacidadCargador: 5 },
   botiquin: { cooldown: 400 },
   escudo_pocion: { cooldown: 400 },
@@ -186,7 +186,7 @@ network.on('identidad', ({ id }) => {
 
 network.on('configPartida', (rules) => {
   const locked = rules.activa || rules.finalizada;
-  for (const [id, field] of [['match-kills', 'limiteKills'], ['match-duration', 'duracion']]) {
+  for (const [id, field] of [['match-kills', 'limiteKills'], ['match-duration', 'duracion'], ['match-bots', 'cantidadBots']]) {
     const select = document.getElementById(id);
     select.disabled = locked;
     select.value = locked ? rules[field] : ArenaUI[field];
@@ -413,6 +413,7 @@ playButton.addEventListener('click', () => {
   playButton.disabled = true;
   network.send('unirse', { nombre, skin: ArenaUI.skin,
     limiteKills: Number(document.getElementById('match-kills').value),
+    cantidadBots: Number(document.getElementById('match-bots').value),
     duracion: Number(document.getElementById('match-duration').value) });
 });
 
@@ -479,6 +480,7 @@ canvas.addEventListener('mousemove', (event) => {
 function shoot() {
   if (!gameStarted || gameFinished) return false;
   const jugadorLocal = jugadores[network.id];
+  if (!jugadorLocal || jugadorLocal.muerto || document.hidden || document.getElementById('sound-dialog').open) return false;
   const arma = jugadorLocal?.inventario?.[jugadorLocal.slotSeleccionado] || 'puños';
   const cooldown = STATS_ARMAS_CLIENTE[arma]?.cooldown || STATS_ARMAS_CLIENTE['puños'].cooldown;
   const ahora = performance.now();
@@ -558,9 +560,13 @@ function dropCurrentItem() {
   network.send('tirarItem', { slot });
 }
 
+let fireHeld = false;
 canvas.addEventListener('mousedown', (event) => {
-  if (!isMobile && event.button === 0) shoot();
+  if (!isMobile && event.button === 0) { fireHeld = true; shoot(); }
 });
+window.addEventListener('mouseup', (event) => { if (event.button === 0) fireHeld = false; });
+window.addEventListener('blur', () => { fireHeld = false; });
+document.addEventListener('visibilitychange', () => { if (document.hidden) fireHeld = false; });
 
 /** Cambia el slot local para respuesta inmediata y lo sincroniza por el transporte activo. */
 function selectSlot(slot) {
@@ -673,7 +679,8 @@ function createMobileControls() {
 if (isMobile) loadNippleJS().then(createMobileControls).catch(console.error);
 
 function update(deltaSeconds) {
-  if (document.getElementById('sound-dialog').open) return;
+  if (document.getElementById('sound-dialog').open) { fireHeld = false; return; }
+  if (!gameStarted || gameFinished || jugadores[network.id]?.muerto) fireHeld = false;
   let moveX = movement.x;
   let moveY = movement.y;
   if (!isMobile) {
@@ -695,6 +702,9 @@ function update(deltaSeconds) {
   } else {
     // Con la cámara centrada en el jugador, el cursor se mide desde el centro de pantalla.
     player.angle = Math.atan2(mouse.y - window.innerHeight / 2, mouse.x - window.innerWidth / 2);
+    const weapon = jugadores[network.id]?.inventario?.[jugadores[network.id]?.slotSeleccionado];
+    if (fireHeld && STATS_ARMAS_CLIENTE[weapon]?.capacidadCargador
+      && performance.now() - lastShotTime >= STATS_ARMAS_CLIENTE[weapon].cooldown) shoot();
   }
 
   // El servidor conservará este estado asociado a socket.id.
