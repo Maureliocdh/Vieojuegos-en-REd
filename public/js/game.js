@@ -8,6 +8,7 @@ const inicioScreen = document.getElementById('pantalla-inicio');
 const finishScreen = document.getElementById('pantalla-fin');
 const nicknameInput = document.getElementById('nickname');
 const playButton = document.getElementById('jugar-button');
+const singlePlayerButton = document.getElementById('singleplayer-button');
 const podiumList = document.getElementById('podio');
 // Adaptador: el resto del juego llama a network.send/on sin conocer el transporte.
 const network = {
@@ -38,6 +39,8 @@ let gameStarted = false;
 let gameFinished = false;
 let networkReady = false;
 let tiempoPartida = 120;
+let joinRequestPending = false;
+let soloModeLocked = false;
 
 // ---- Animaciones de consumibles ----
 // { tipo: 'vida'|'escudo', inicio: ms, duracion: ms }
@@ -223,8 +226,15 @@ network.on('configPartida', (rules) => {
   }
   document.querySelector('.lobby-footer > span:nth-child(2)').textContent = `${rules.limiteKills} BAJAS PARA GANAR`;
   document.querySelector('.match-tag b').textContent = `${String(rules.duracion / 60).padStart(2, '0')}:00`;
+  soloModeLocked = rules.activa && rules.soloJugador && !joinRequestPending && !gameStarted;
+  if (soloModeLocked) {
+    playButton.disabled = true;
+    singlePlayerButton.disabled = true;
+    document.getElementById('connection-status').textContent = 'Esta partida es individual y ya está en curso';
+  }
   if (rules.finalizada) {
     playButton.disabled = true;
+    singlePlayerButton.disabled = true;
     document.getElementById('connection-status').textContent = 'Ronda terminada. Preparando la siguiente...';
   } else if (rules.activa && !gameStarted) {
     document.getElementById('connection-status').textContent = 'Partida en curso';
@@ -272,12 +282,25 @@ network.on('reinicioPartida', () => {
   stopResultMusic();
   gameStarted = false;
   gameFinished = false;
+  joinRequestPending = false;
+  soloModeLocked = false;
   tiempoPartida = 120;
   setGameVisibility(false);
   finishScreen.style.display = 'none';
   inicioScreen.style.display = 'flex';
   nicknameInput.value = ArenaUI.name;
   playButton.disabled = !networkReady;
+  singlePlayerButton.disabled = !networkReady;
+});
+
+network.on('entradaRechazada', ({ motivo } = {}) => {
+  joinRequestPending = false;
+  soloModeLocked = motivo === 'soloJugador';
+  playButton.disabled = !networkReady || soloModeLocked || gameFinished;
+  singlePlayerButton.disabled = !networkReady || soloModeLocked || gameFinished;
+  document.getElementById('connection-status').textContent = soloModeLocked
+    ? 'Esta partida es individual y no admite más jugadores'
+    : 'La ronda actual es multijugador; elige “Jugar ahora” para unirte';
 });
 
 network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor, cofres: cofresServidor }) => {
@@ -386,7 +409,7 @@ async function connectNetwork() {
       for (const type of [
         'configMapa', 'estadoJuego', 'jugadorDesconectado', 'inicioPartida',
         'tiempoPartida', 'finDeJuego', 'reinicioPartida', 'kill', 'explosion', 'zonaActualizada',
-        'configPartida',
+        'configPartida', 'entradaRechazada',
       ]) {
         socket.on(type, (data) => network.receive(type, data));
       }
@@ -420,9 +443,11 @@ connectNetwork();
 
 function setConnectionState(ready) {
   networkReady = ready;
-  playButton.disabled = !ready || gameFinished;
+  playButton.disabled = !ready || gameFinished || soloModeLocked;
+  singlePlayerButton.disabled = !ready || gameFinished || soloModeLocked;
   document.getElementById('connection-status').textContent = ready ? 'Arena disponible' : 'Sin conexión. Reconectando...';
   if (!ready) {
+    joinRequestPending = false;
     gameStarted = false;
     keys.clear();
     Object.assign(movement, { x: 0, y: 0 });
@@ -443,17 +468,22 @@ function setGameVisibility(visible) {
   });
 }
 
-playButton.addEventListener('click', () => {
+function requestJoin(soloJugador) {
   const nombre = nicknameInput.value.trim();
   if (!nombre) { nicknameInput.focus(); document.getElementById('connection-status').textContent = 'Escribe tu nombre para entrar'; return; }
-  if (!networkReady || gameStarted || gameFinished) return;
+  if (!networkReady || gameStarted || gameFinished || soloModeLocked) return;
   try { getAudioCtx(); } catch {}
   playButton.disabled = true;
+  singlePlayerButton.disabled = true;
+  joinRequestPending = true;
   network.send('unirse', { nombre, skin: ArenaUI.skin,
     limiteKills: Number(document.getElementById('match-kills').value),
     cantidadBots: Number(document.getElementById('match-bots').value),
-    duracion: Number(document.getElementById('match-duration').value) });
-});
+    duracion: Number(document.getElementById('match-duration').value), soloJugador });
+}
+
+playButton.addEventListener('click', () => requestJoin(false));
+singlePlayerButton.addEventListener('click', () => requestJoin(true));
 
 nicknameInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') playButton.click();

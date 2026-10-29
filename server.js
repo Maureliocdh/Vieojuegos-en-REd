@@ -108,6 +108,7 @@ let cantidadBots = 11;
 const RESPAWN_COOLDOWN = 3000;
 let partidaEnCurso = false;
 let partidaFinalizada = false;
+let modoSoloJugador = false;
 let tiempoRestante = 120;
 let limiteKills = 10;
 let duracionPartida = 120;
@@ -161,13 +162,14 @@ function broadcast(type, data) {
 }
 
 function reglasPartida() {
-  return { limiteKills, duracion: duracionPartida, cantidadBots, activa: partidaEnCurso, finalizada: partidaFinalizada };
+  return { limiteKills, duracion: duracionPartida, cantidadBots, soloJugador: modoSoloJugador, activa: partidaEnCurso, finalizada: partidaFinalizada };
 }
 
 function iniciarPartida(opciones = {}) {
   if (partidaEnCurso || partidaFinalizada) return;
   limiteKills = [5, 10, 20, 30].includes(opciones.limiteKills) ? opciones.limiteKills : 10;
   duracionPartida = [60, 120, 180, 300].includes(opciones.duracion) ? opciones.duracion : 120;
+  modoSoloJugador = opciones.soloJugador === true;
   const nuevosBots = [0, 5, 11, 15, 20].includes(opciones.cantidadBots) ? opciones.cantidadBots : 11;
   if (nuevosBots !== cantidadBots) {
     for (const [id, jugador] of Object.entries(jugadores)) {
@@ -258,6 +260,7 @@ function finalizarPartida() {
     plataformas.forEach((plataforma) => { plataforma.objeto = null; });
     tiempoRestante = 120;
     partidaFinalizada = false;
+    modoSoloJugador = false;
     broadcast('configPartida', reglasPartida());
     broadcast('reinicioPartida', {});
   }, 10_000);
@@ -266,6 +269,11 @@ function finalizarPartida() {
 function unirseJugador(id, nombre, client = null, skin = 'pulse', opciones = {}) {
   const jugador = jugadores[id];
   if (!jugador || jugador.esBot || jugador.unido || partidaFinalizada) return;
+  if (partidaEnCurso && (opciones.soloJugador === true) !== modoSoloJugador) {
+    const motivo = modoSoloJugador ? 'soloJugador' : 'modoIncompatible';
+    if (client) sendToClient(client, 'entradaRechazada', { motivo });
+    return;
+  }
   const nombreLimpio = typeof nombre === 'string' ? nombre.trim().slice(0, 16) : '';
   jugador.nombre = nombreLimpio || `Jugador_${id.slice(0, 5)}`;
   jugador.skin = skins.some((candidate) => candidate.id === skin) ? skin : 'pulse';

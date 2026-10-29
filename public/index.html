@@ -60,7 +60,11 @@
               <label for="match-bots">Cantidad de bots<select id="match-bots"><option value="0">Sin bots</option><option value="5">5 bots</option><option value="11" selected>11 bots</option><option value="15">15 bots</option><option value="20">20 bots</option></select></label>
             </div>
             <label for="nickname">Nombre de jugador</label><input id="nickname" type="text" maxlength="16" autocomplete="nickname" placeholder="Tu nombre" />
-            <button id="jugar-button" type="button" disabled><span>Jugar ahora</span><i data-lucide="arrow-right"></i></button><p id="connection-status" role="status">Conectando con la arena...</p>
+            <div class="start-actions">
+              <button id="jugar-button" type="button" disabled><span>Jugar ahora</span><i data-lucide="arrow-right"></i></button>
+              <button id="singleplayer-button" type="button" disabled><span>Un jugador</span><i data-lucide="user-round"></i></button>
+            </div>
+            <p id="connection-status" role="status">Conectando con la arena...</p>
           </section>
         </main>
         <footer class="lobby-footer"><span>ISLA 01 <b>OUTPOST</b></span><span>10 BAJAS PARA GANAR</span><span id="transport-label">EN LÍNEA</span></footer>

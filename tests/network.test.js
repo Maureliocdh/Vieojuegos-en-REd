@@ -41,6 +41,42 @@ function connect(url, native) {
 }
 
 for (const native of [false, true]) {
+  test(`Partida individual rechaza participantes adicionales: ${native ? 'WebSocket nativo' : 'Socket.IO'}`, { timeout: 15000 }, async (context) => {
+    const port = 22000 + Math.floor(Math.random() * 15000);
+    const server = spawn(process.execPath, ['server.js', ...(native ? ['--nativo'] : [])], {
+      cwd: path.join(__dirname, '..'), env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    context.after(() => server.kill());
+    await new Promise((resolve, reject) => {
+      server.stdout.on('data', (data) => { if (String(data).includes('Servidor (')) resolve(); });
+      server.once('error', reject);
+      server.once('exit', (code) => reject(new Error(`Servidor terminó: ${code}`)));
+    });
+
+    const url = `http://localhost:${port}`;
+    const first = connect(url, native);
+    const second = connect(url, native);
+    context.after(() => { first.close(); second.close(); });
+    await Promise.all([first.wait('configMapa'), second.wait('configMapa')]);
+
+    first.send('unirse', { nombre: 'Individual', skin: 'ronin', limiteKills: 20, duracion: 180, cantidadBots: 5, soloJugador: true });
+    await first.wait('inicioPartida');
+    const rules = await first.wait('configPartida', (config) => config.activa);
+    assert.equal(rules.soloJugador, true);
+    assert.equal(rules.limiteKills, 20);
+    assert.equal(rules.duracion, 180);
+    assert.equal(rules.cantidadBots, 5);
+
+    second.send('unirse', { nombre: 'No admitido', skin: 'nova' });
+    const rejection = await second.wait('entradaRechazada');
+    assert.equal(rejection.motivo, 'soloJugador');
+    const state = await first.wait('estadoJuego', (snapshot) => Object.values(snapshot.jugadores).some((player) => player.nombre === 'Individual'));
+    assert.equal(Object.values(state.jugadores).filter((player) => !player.esBot && player.unido).length, 1);
+    assert.equal(Object.values(state.jugadores).filter((player) => player.esBot).length, 5);
+  });
+}
+
+for (const native of [false, true]) {
   test(`Dos clientes: ${native ? 'WebSocket nativo' : 'Socket.IO'}`, { timeout: 15000 }, async (context) => {
     const port = 22000 + Math.floor(Math.random() * 15000);
     const server = spawn(process.execPath, ['server.js', ...(native ? ['--nativo'] : [])], {
@@ -67,12 +103,16 @@ for (const native of [false, true]) {
     assert.equal(rules.limiteKills, 20);
     assert.equal(rules.duracion, 180);
     assert.equal(rules.cantidadBots, native ? 0 : 5);
+    assert.equal(rules.soloJugador, false);
     const lobby = await second.wait('estadoJuego', (state) => Object.values(state.jugadores).some((player) => player.nombre === 'Primero'));
     assert.equal(second.messages.filter((message) => message.type === 'inicioPartida').length, 0);
     const waiting = Object.values(lobby.jugadores).find((player) => !player.esBot && !player.unido);
     assert.equal(Object.values(lobby.jugadores).filter((player) => player.esBot).length, native ? 0 : 5);
     assert.equal(waiting.vida, 100);
     assert.equal(waiting.inventario.filter(Boolean).length, 1);
+    second.send('unirse', { nombre: 'Solicitud individual', soloJugador: true });
+    const rejectedMode = await second.wait('entradaRechazada');
+    assert.equal(rejectedMode.motivo, 'modoIncompatible');
     second.send('unirse', { nombre: '<img src=x>', skin: 'nova', limiteKills: 5, duracion: 60, cantidadBots: 20 });
     await second.wait('inicioPartida');
     const both = (state) => Object.values(state.jugadores).filter((player) => !player.esBot && player.unido).length === 2;
