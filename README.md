@@ -118,11 +118,13 @@ La interfaz admite orientación vertical y horizontal. Las pruebas automatizadas
 2. Selecciona las **bajas para ganar**: 5, 10, 20 o 30.
 3. Selecciona el **tiempo máximo**: 1, 2, 3 o 5 minutos.
 4. Ajusta el sonido desde el botón de configuración.
-5. Pulsa **Jugar ahora**.
+5. Pulsa **Crear sala**. El primer participante será el anfitrión y fijará las reglas.
+6. Los demás abren la misma dirección, personalizan su personaje, escriben su nombre y pulsan **Unirse a la sala**.
+7. Todos ven la lista de participantes. Cuando estén los jugadores deseados, el anfitrión pulsa **Iniciar partida**.
 
-El primer jugador que entra fija las reglas de la ronda. Los jugadores que llegan después ven esas reglas bloqueadas. Nadie sale del menú hasta pulsar su propio botón de jugar.
+La sala se cierra al comenzar la ronda: no se admiten participantes nuevos durante la partida. El combate empieza tras una preparación de cuatro segundos; durante ella, jugadores, bots y temporizadores permanecen detenidos. Si el anfitrión se desconecta o recarga, el rol pasa a otro participante. Antes de comenzar, el anfitrión puede deshacer la sala y devolver a todos a la pantalla principal.
 
-La arena incluye once bots. Tras una eliminación, reapareces a los tres segundos. Al finalizar, se muestra el podio y se prepara una nueva ronda después de diez segundos.
+La arena incluye once bots por defecto. Tras una eliminación, reapareces a los tres segundos. Al finalizar se muestra la clasificación completa y se destacan los tres primeros puestos. Cada jugador conserva sus resultados hasta pulsar **Volver al inicio**, desde donde puede crear una nueva sala o unirse a otra.
 
 ## Controles
 

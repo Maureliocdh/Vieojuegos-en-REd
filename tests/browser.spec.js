@@ -5,7 +5,7 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('response', (response) => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`); });
   await page.goto('/');
-  await expect(page.getByRole('button', { name: 'Jugar ahora' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Crear sala' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Un jugador' })).toBeEnabled();
   const soloRequest = await page.evaluate(() => {
     let request;
@@ -48,8 +48,25 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
   expect(lobbyFit).toEqual({ overflow: false, headingFits: true });
   const spectator = await context.newPage();
   await spectator.goto('/');
-  await expect(spectator.getByRole('button', { name: 'Jugar ahora' })).toBeEnabled();
-  await page.getByRole('button', { name: 'Jugar ahora' }).click();
+  await expect(spectator.getByRole('button', { name: 'Crear sala' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Crear sala' }).click();
+  await expect(page.locator('#pantalla-espera')).toBeVisible();
+  await expect(page.locator('#room-players li')).toHaveCount(1);
+  const guest = await context.newPage();
+  await guest.goto('/');
+  await guest.locator('#nickname').fill('Invitado');
+  await guest.getByRole('button', { name: 'Nova', exact: true }).click();
+  await guest.getByRole('button', { name: 'Unirse a la sala' }).click();
+  await expect(guest.locator('#pantalla-espera')).toBeVisible();
+  await expect(guest.locator('#start-match')).toBeHidden();
+  await expect(page.locator('#room-players li')).toHaveCount(2);
+  await page.screenshot({ path: testInfo.outputPath('waiting-room.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Iniciar partida', exact: true }).click();
+  await expect(page.locator('#pantalla-espera')).toBeHidden();
+  await expect(page.locator('#match-countdown')).toBeVisible();
+  await expect(page.locator('#match-countdown')).toBeHidden({ timeout: 8000 });
+  await expect(guest.locator('#pantalla-espera')).toBeHidden();
+  await guest.close();
   await expect(page.locator('#pantalla-inicio')).toBeHidden();
   await page.waitForFunction(() => Boolean(jugadores[network.id]));
   const heldFire = await page.evaluate(() => {
@@ -117,10 +134,10 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
   await page.locator('#mute-audio').uncheck();
   await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
   expect(await page.evaluate(() => Math.round(masterGain.gain.value * 100))).toBe(35);
-  await spectator.locator('#nickname').fill('Segundo');
-  await spectator.getByRole('button', { name: 'Nova', exact: true }).click();
-  await spectator.getByRole('button', { name: 'Jugar ahora' }).click();
-  await page.waitForFunction(() => Object.values(jugadores).some((player) => player.nombre === 'Segundo' && player.skin === 'nova'));
+  await expect(spectator.locator('#jugar-button')).toBeDisabled();
+  await spectator.evaluate(() => network.send('unirse', { nombre: 'Segundo' }));
+  await expect(spectator.locator('#pantalla-inicio')).toBeVisible();
+  expect(await page.evaluate(() => Object.values(jugadores).some(p => p.nombre === 'Segundo'))).toBe(false);
   await spectator.close();
   const mobile = testInfo.project.use.isMobile;
   if (mobile) {
@@ -279,6 +296,20 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
   expect(bushCheck.insideAlpha).toBeLessThan(80);
   expect(bushCheck.outsideVisible).toBe(false);
   expect(bushCheck.insideVisible).toBe(true);
+  await page.evaluate(() => {
+    gameStarted = true;
+    network.receive('finDeJuego', Array.from({ length: 5 }, (_, i) => ({
+      id: i === 3 ? network.id : `result-${i}`, nombre: `Operador ${i + 1}`, kills: 12 - i, skin: 'ronin',
+    })));
+  });
+  await expect(page.locator('#result-leaders article')).toHaveCount(3);
+  await expect(page.locator('#podio li')).toHaveCount(5);
+  await expect(page.locator('#podio .own-score')).toHaveCount(1);
+  await page.screenshot({ path: testInfo.outputPath('results.png'), fullPage: true });
+  await page.evaluate(() => network.receive('reinicioPartida', {}));
+  await expect(page.locator('#pantalla-fin')).toBeVisible();
+  await page.getByRole('button', { name: 'Volver al inicio', exact: true }).click();
+  await expect(page.locator('#pantalla-fin')).toBeHidden();
   const resultMusic = await page.evaluate(() => {
     const results = [];
     const originalMusic = playResultMusic;
@@ -288,7 +319,7 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
       network.receive('finDeJuego', [{ id: network.id, nombre: 'Podio', kills: 10 }]);
       const victoryNotes = resultNotes.size;
       network.receive('finDeJuego', [{ id: network.id, nombre: 'Podio', kills: 10 }]);
-      network.receive('reinicioPartida');
+      document.getElementById('return-home').click();
       const resetNotes = resultNotes.size;
       gameStarted = true;
       network.receive('finDeJuego', [{ id: 'otro-id', nombre: jugadores[network.id].nombre, kills: 10 }]);
@@ -297,7 +328,7 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
       ArenaUI.muted = true; updateAudioLevels();
       const mutedGain = masterGain.gain.value;
       ArenaUI.muted = mutedBefore; updateAudioLevels();
-      network.receive('reinicioPartida');
+      document.getElementById('return-home').click();
       network.receive('finDeJuego', []);
       return { results, victoryNotes, defeatNotes, resetNotes, mutedGain };
     } finally { playResultMusic = originalMusic; stopResultMusic(); }

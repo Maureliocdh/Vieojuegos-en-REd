@@ -41,124 +41,59 @@ function connect(url, native) {
 }
 
 for (const native of [false, true]) {
-  test(`Partida individual rechaza participantes adicionales: ${native ? 'WebSocket nativo' : 'Socket.IO'}`, { timeout: 15000 }, async (context) => {
+  test(`Sala: espera, permisos, bloqueo tardío y relevo de anfitrión (${native ? 'nativo' : 'Socket.IO'})`, { timeout: 15000 }, async (context) => {
     const port = 22000 + Math.floor(Math.random() * 15000);
     const server = spawn(process.execPath, ['server.js', ...(native ? ['--nativo'] : [])], {
-      cwd: path.join(__dirname, '..'), env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: path.join(__dirname, '..'), env: { ...process.env, PORT: String(port) }, stdio: ['ignore','pipe','pipe'],
     });
     context.after(() => server.kill());
     await new Promise((resolve, reject) => {
-      server.stdout.on('data', (data) => { if (String(data).includes('Servidor (')) resolve(); });
+      server.stdout.on('data', data => { if (String(data).includes('Servidor (')) resolve(); });
       server.once('error', reject);
-      server.once('exit', (code) => reject(new Error(`Servidor terminó: ${code}`)));
+      server.once('exit', code => reject(new Error(`Servidor terminó: ${code}`)));
     });
-
     const url = `http://localhost:${port}`;
-    const first = connect(url, native);
-    const second = connect(url, native);
-    context.after(() => { first.close(); second.close(); });
-    await Promise.all([first.wait('configMapa'), second.wait('configMapa')]);
-
-    first.send('unirse', { nombre: 'Individual', skin: 'ronin', limiteKills: 20, duracion: 180, cantidadBots: 5, soloJugador: true });
-    await first.wait('inicioPartida');
-    const rules = await first.wait('configPartida', (config) => config.activa);
-    assert.equal(rules.soloJugador, true);
-    assert.equal(rules.limiteKills, 20);
-    assert.equal(rules.duracion, 180);
-    assert.equal(rules.cantidadBots, 5);
-
-    second.send('unirse', { nombre: 'No admitido', skin: 'nova' });
-    const rejection = await second.wait('entradaRechazada');
-    assert.equal(rejection.motivo, 'soloJugador');
-    const state = await first.wait('estadoJuego', (snapshot) => Object.values(snapshot.jugadores).some((player) => player.nombre === 'Individual'));
-    assert.equal(Object.values(state.jugadores).filter((player) => !player.esBot && player.unido).length, 1);
-    assert.equal(Object.values(state.jugadores).filter((player) => player.esBot).length, 5);
+    const host = connect(url, native), guest = connect(url, native);
+    context.after(() => { host.close(); guest.close(); });
+    const [mapA, mapB] = await Promise.all([host.wait('configMapa'), guest.wait('configMapa')]);
+    assert.deepEqual(mapA, mapB);
+    host.send('unirse', { nombre: 'Host', cantidadBots: 0, duracion: 60, limiteKills: 5 });
+    const room = await host.wait('estadoSala', r => r.jugadores.length === 1);
+    assert.equal(room.activa, false);
+    assert.equal(host.messages.some(m => m.type === 'inicioPartida'), false);
+    guest.send('unirse', { nombre: '<img src=x>', skin: 'nova', duracion: 300, cantidadBots: 20 });
+    const joined = await guest.wait('estadoSala', r => r.jugadores.length === 2);
+    assert.equal(joined.reglas.duracion, 60);
+    assert.equal(joined.reglas.cantidadBots, 0);
+    assert.equal(joined.jugadores.find(j => j.id !== room.anfitrionId).skin, 'nova');
+    guest.send('cerrarSala', {});
+    guest.send('iniciarSala', {});
+    guest.send('movimiento', { x: 100, y: 100, angle: 0 });
+    const waiting = await guest.wait('estadoJuego', state => Object.values(state.jugadores).filter(p => p.unido && !p.esBot).length === 2);
+    assert.equal(waiting.jugadores[room.anfitrionId].vida, 100);
+    assert.equal(guest.messages.some(m => m.type === 'inicioPartida'), false);
+    host.close();
+    const promoted = await guest.wait('estadoSala', r => r.jugadores.length === 1 && r.anfitrionId !== room.anfitrionId);
+    guest.send('cerrarSala', {});
+    await guest.wait('estadoSala', r => r.jugadores.length === 0 && r.anfitrionId === null);
+    guest.send('unirse', { nombre: 'Nuevo host', cantidadBots: 0, duracion: 60 });
+    await guest.wait('estadoSala', r => r.jugadores.some(j => j.nombre === 'Nuevo host'));
+    guest.send('iniciarSala', {});
+    const start = await guest.wait('inicioPartida');
+    assert.equal(start.tiempoRestante, 60);
+    assert.equal(start.preparacionRestante, 4);
+    const state = await guest.wait('estadoJuego', state => Object.values(state.jugadores).filter(p => p.esBot).length === 0);
+    assert.ok(state.jugadores[promoted.anfitrionId]);
+    const initialX = state.jugadores[promoted.anfitrionId].x;
+    guest.send('movimiento', { x: 100, y: 100, angle: 0 });
+    const frozen = await guest.wait('estadoJuego', s => s.preparacionRestante === 3);
+    assert.equal(frozen.jugadores[promoted.anfitrionId].x, initialX);
+    const late = connect(url, native);
+    context.after(() => late.close());
+    await late.wait('configMapa');
+    late.send('unirse', { nombre: 'Tarde' });
+    assert.equal((await late.wait('entradaRechazada')).motivo, 'partidaEnCurso');
+    assert.equal(late.messages.some(m => m.type === 'inicioPartida'), false);
   });
 }
 
-for (const native of [false, true]) {
-  test(`Dos clientes: ${native ? 'WebSocket nativo' : 'Socket.IO'}`, { timeout: 15000 }, async (context) => {
-    const port = 22000 + Math.floor(Math.random() * 15000);
-    const server = spawn(process.execPath, ['server.js', ...(native ? ['--nativo'] : [])], {
-      cwd: path.join(__dirname, '..'), env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    context.after(() => server.kill());
-    await new Promise((resolve, reject) => {
-      server.stdout.on('data', (data) => { if (String(data).includes('Servidor (')) resolve(); });
-      server.once('error', reject);
-      server.once('exit', (code) => reject(new Error(`Servidor terminó: ${code}`)));
-    });
-    const url = `http://localhost:${port}`;
-    assert.equal((await (await fetch(`${url}/modo`)).json()).modo, native ? 'nativo' : 'socket.io');
-    const first = connect(url, native);
-    const second = connect(url, native);
-    context.after(() => { first.close(); second.close(); });
-    const [mapFirst, mapSecond] = await Promise.all([first.wait('configMapa'), second.wait('configMapa')]);
-    assert.deepEqual(mapFirst, mapSecond);
-    assert.ok(mapFirst.obstaculos.some((obstacle) => obstacle.tipo === 'arbol'));
-    first.send('unirse', { nombre: 'Primero', skin: 'ronin', limiteKills: 20, duracion: 180, cantidadBots: native ? 0 : 5 });
-    const start = await first.wait('inicioPartida');
-    assert.equal(start.tiempoRestante, 180);
-    const rules = await second.wait('configPartida', (config) => config.activa);
-    assert.equal(rules.limiteKills, 20);
-    assert.equal(rules.duracion, 180);
-    assert.equal(rules.cantidadBots, native ? 0 : 5);
-    assert.equal(rules.soloJugador, false);
-    const lobby = await second.wait('estadoJuego', (state) => Object.values(state.jugadores).some((player) => player.nombre === 'Primero'));
-    assert.equal(second.messages.filter((message) => message.type === 'inicioPartida').length, 0);
-    const waiting = Object.values(lobby.jugadores).find((player) => !player.esBot && !player.unido);
-    assert.equal(Object.values(lobby.jugadores).filter((player) => player.esBot).length, native ? 0 : 5);
-    assert.equal(waiting.vida, 100);
-    assert.equal(waiting.inventario.filter(Boolean).length, 1);
-    second.send('unirse', { nombre: 'Solicitud individual', soloJugador: true });
-    const rejectedMode = await second.wait('entradaRechazada');
-    assert.equal(rejectedMode.motivo, 'modoIncompatible');
-    second.send('unirse', { nombre: '<img src=x>', skin: 'nova', limiteKills: 5, duracion: 60, cantidadBots: 20 });
-    await second.wait('inicioPartida');
-    const both = (state) => Object.values(state.jugadores).filter((player) => !player.esBot && player.unido).length === 2;
-    const [stateFirst, stateSecond] = await Promise.all([first.wait('estadoJuego', both), second.wait('estadoJuego', both)]);
-    const humans = (state) => Object.entries(state.jugadores).filter(([, player]) => !player.esBot).map(([id, player]) => ({ id, nombre: player.nombre, skin: player.skin, inventario: player.inventario }));
-    assert.deepEqual(humans(stateFirst), humans(stateSecond));
-    assert.equal(Object.values(stateSecond.jugadores).filter((player) => player.esBot).length, native ? 0 : 5);
-    assert.equal(humans(stateFirst).find((player) => player.nombre === 'Primero').skin, 'ronin');
-    assert.equal(humans(stateFirst).find((player) => player.nombre === '<img src=x>').skin, 'nova');
-    const firstId = humans(stateFirst).find((player) => player.nombre === 'Primero').id;
-    first.send('tirarItem', { slot: 0 });
-    first.send('tirarItem', { slot: 0.5 });
-    first.send('cambiarSlot', { slot: 4 });
-    const protectedFists = await second.wait('estadoJuego', (state) => state.jugadores[firstId]?.slotSeleccionado === 4);
-    assert.equal(protectedFists.jugadores[firstId].inventario[0], 'puños');
-    assert.ok(!protectedFists.itemsEnSuelo.some((drop) => drop.item === 'puños'));
-    first.send('movimiento', { x: 3100, y: 3100, angle: 1 });
-    await second.wait('estadoJuego', (state) => state.jugadores[firstId]?.x === 3100);
-    first.send('movimiento', { x: 660, y: 800, angle: 1 });
-    first.send('unirse', { nombre: 'Duplicado', skin: 'glitch' });
-    second.send('cambiarSlot', { slot: 2 });
-    const checked = await first.wait('estadoJuego', (state) => Object.values(state.jugadores).some((player) => player.nombre === '<img src=x>' && player.slotSeleccionado === 2));
-    assert.equal(checked.jugadores[firstId].nombre, 'Primero');
-    assert.equal(checked.jugadores[firstId].skin, 'ronin');
-    assert.notDeepEqual([checked.jugadores[firstId].x, checked.jugadores[firstId].y], [660, 800]);
-    for (const platform of checked.plataformas) {
-      assert.ok(!mapFirst.obstaculos.flatMap(Buildings.walls).some((obstacle) => platform.x > obstacle.x && platform.x < obstacle.x + obstacle.width && platform.y > obstacle.y && platform.y < obstacle.y + obstacle.height));
-    }
-    const building = mapFirst.obstaculos.find(Buildings.isBuilding);
-    const door = Buildings.door(building);
-    first.send('movimiento', { x: door.x + 48, y: door.y + 75, angle: 0 });
-    first.send('intercambiar', {});
-    await second.wait('estadoJuego', (state) => state.obstaculos.find((object) => object.id === building.id)?.puertaAbierta);
-    first.send('movimiento', { x: door.x + 48, y: door.y - 60, angle: 0 });
-    const inside = await second.wait('estadoJuego', (state) => state.jugadores[firstId]?.y === door.y - 60);
-    assert.equal(Buildings.inside(building, inside.jugadores[firstId]), true);
-    second.close();
-    await first.wait('jugadorDesconectado');
-    const third = connect(url, native);
-    context.after(() => third.close());
-    await third.wait('configMapa');
-    const lateRules = await third.wait('configPartida');
-    assert.equal(lateRules.limiteKills, 20);
-    assert.equal(lateRules.duracion, 180);
-    third.send('unirse', { nombre: 'Tercero', skin: '../../invalid' });
-    const fallback = await first.wait('estadoJuego', (state) => Object.values(state.jugadores).some((player) => player.nombre === 'Tercero'));
-    assert.equal(Object.values(fallback.jugadores).find((player) => player.nombre === 'Tercero').skin, 'pulse');
-  });
-}

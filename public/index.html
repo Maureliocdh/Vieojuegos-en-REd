@@ -61,7 +61,7 @@
             </div>
             <label for="nickname">Nombre de jugador</label><input id="nickname" type="text" maxlength="16" autocomplete="nickname" placeholder="Tu nombre" />
             <div class="start-actions">
-              <button id="jugar-button" type="button" disabled><span>Jugar ahora</span><i data-lucide="arrow-right"></i></button>
+              <button id="jugar-button" type="button" disabled><span>Crear sala</span><i data-lucide="arrow-right"></i></button>
               <button id="singleplayer-button" type="button" disabled><span>Un jugador</span><i data-lucide="user-round"></i></button>
             </div>
             <p id="connection-status" role="status">Conectando con la arena...</p>
@@ -70,15 +70,33 @@
         <footer class="lobby-footer"><span>ISLA 01 <b>OUTPOST</b></span><span>10 BAJAS PARA GANAR</span><span id="transport-label">EN LÍNEA</span></footer>
       </div>
     </div>
+    <div id="pantalla-espera" hidden>
+      <section class="room-panel">
+        <header class="lobby-header"><strong>O+</strong><span>OUTPOST / SALA DE ESPERA</span></header>
+        <p class="eyebrow">REÚNE A TU EQUIPO</p><h1>Todo listo para<br><span>entrar en la arena.</span></h1>
+        <p id="room-rules"></p>
+        <ul id="room-players" aria-label="Jugadores en la sala"></ul>
+        <p id="room-status" role="status"></p>
+        <button id="start-match" type="button" hidden>Iniciar partida</button>
+        <button id="close-room" type="button" hidden>Deshacer sala y volver al inicio</button>
+        <p class="room-note">El anfitrión inicia cuando estén todos. Al comenzar, la sala se cierra hasta la siguiente ronda.</p>
+      </section>
+    </div>
     <div id="pantalla-fin">
       <div class="panel-fin">
-        <h1>Fin de la Partida</h1>
+        <header class="lobby-header"><strong>O+</strong><span>OUTPOST / RESULTADOS</span></header>
+        <p class="eyebrow">RONDA COMPLETADA</p><h1>Los mejores de la arena</h1>
+        <div id="result-leaders"></div>
+        <h2>Clasificación completa</h2>
         <ul id="podio"></ul>
+        <button id="return-home" type="button">Volver al inicio</button>
+        <p class="room-note">Consulta los resultados a tu ritmo. Vuelve al inicio cuando quieras preparar otra partida.</p>
       </div>
     </div>
     <div id="scoreboard" aria-label="Marcador de eliminaciones"></div>
     <div id="respawn-message" aria-live="polite"></div>
     <canvas id="game"></canvas>
+    <div id="match-countdown" hidden aria-live="polite"><p>¡DOMINA LA ARENA!</p><h2>Elimina a todos los que puedas</h2><strong id="countdown-number"></strong><span>El combate empieza para todos al terminar la cuenta.</span></div>
     <div id="move-zone" class="joystick-zone" aria-label="Joystick de movimiento"></div>
     <div id="aim-zone" class="joystick-zone" aria-label="Joystick de apuntado"></div>
     <button id="swap-button" type="button">Cambiar</button>
@@ -91,6 +109,7 @@
     <script src="/vendor/lucide.js"></script>
     <script src="/js/assets.js"></script>
     <script src="/js/buildings.js"></script>
+    <script src="/js/zones.js"></script>
     <script src="/js/lobby.js"></script>
     <script src="/js/world.js"></script>
     <script src="/js/game.js"></script>

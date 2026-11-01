@@ -3,6 +3,7 @@ const express = require('express');
 const http = require('http');
 const { skins } = require('./public/js/assets.js');
 const Buildings = require('./public/js/buildings.js');
+const SpecialZones = require('./public/js/zones.js');
 
 const app = express();
 const server = http.createServer(app);
@@ -114,12 +115,63 @@ let limiteKills = 10;
 let duracionPartida = 120;
 let temporizadorPartida = null;
 
-// Zona segura: se reduce cada 30 s durante la partida.
+// Tormenta: espera anunciada y cierre gradual calculado por el servidor.
 const zonaSegura = { x: MAP_WIDTH / 2, y: MAP_HEIGHT / 2, radio: Math.hypot(MAP_WIDTH, MAP_HEIGHT) / 2 };
 let ultimoDañoZona = 0;
 zonaSegura.fase = 0;
 zonaSegura.dañoPorSegundo = 0;
 let temporizadorZona = null;
+const ZONA_ESPERA_INICIAL = 20_000;
+const ZONA_ESPERA = 15_000;
+const ZONA_CIERRE = 20_000;
+const ZONA_RADIO_MIN = 400;
+let transicionZona = null;
+
+function prepararCierreZona(ahora, espera) {
+  const radio = Math.max(ZONA_RADIO_MIN, zonaSegura.radio * 0.7);
+  const desplazamiento = Math.min(160, (zonaSegura.radio - radio) * 0.3);
+  zonaSegura.objetivo = {
+    x: Math.max(800, Math.min(MAP_WIDTH - 800, zonaSegura.x + (Math.random() * 2 - 1) * desplazamiento)),
+    y: Math.max(800, Math.min(MAP_HEIGHT - 800, zonaSegura.y + (Math.random() * 2 - 1) * desplazamiento)),
+    radio,
+  };
+  zonaSegura.estado = 'espera';
+  zonaSegura.finEtapa = ahora + espera;
+  transicionZona = { x: zonaSegura.x, y: zonaSegura.y, radio: zonaSegura.radio };
+}
+
+function actualizarZonaSegura() {
+  if (!partidaEnCurso || !transicionZona) return;
+  const ahora = Date.now();
+  while (ahora >= zonaSegura.finEtapa) {
+    const limite = zonaSegura.finEtapa;
+    if (zonaSegura.estado === 'espera') {
+      zonaSegura.estado = 'cerrando';
+      zonaSegura.fase += 1;
+      zonaSegura.dañoPorSegundo = Math.min(5, zonaSegura.fase);
+      ultimoDañoZona = limite;
+      zonaSegura.finEtapa = limite + ZONA_CIERRE;
+    } else {
+      Object.assign(zonaSegura, zonaSegura.objetivo);
+      if (zonaSegura.radio <= ZONA_RADIO_MIN) {
+        zonaSegura.estado = 'final';
+        zonaSegura.objetivo = null;
+        zonaSegura.finEtapa = null;
+        transicionZona = null;
+        zonaSegura.segundosEtapa = 0;
+        return;
+      }
+      prepararCierreZona(limite, ZONA_ESPERA);
+    }
+  }
+  if (zonaSegura.estado === 'cerrando') {
+    const progreso = 1 - (zonaSegura.finEtapa - ahora) / ZONA_CIERRE;
+    for (const key of ['x', 'y', 'radio']) {
+      zonaSegura[key] = transicionZona[key] + (zonaSegura.objetivo[key] - transicionZona[key]) * progreso;
+    }
+  }
+  zonaSegura.segundosEtapa = Math.max(0, Math.ceil((zonaSegura.finEtapa - ahora) / 1000));
+}
 
 // Granadas activas en vuelo/cuenta regresiva: { id, x, y, angle, lanzadorId, explotaEn }
 const granadas = [];
@@ -161,12 +213,41 @@ function broadcast(type, data) {
   }
 }
 
+let anfitrionId = null;
+let opcionesSala = {};
+let finPreparacion = 0;
+function estadoSala() {
+  return { anfitrionId, activa: partidaEnCurso, finalizada: partidaFinalizada,
+    reglas: opcionesSala, jugadores: Object.entries(jugadores)
+      .filter(([, j]) => j.unido && !j.esBot)
+      .map(([id, j]) => ({ id, nombre: j.nombre, skin: j.skin })) };
+}
+function publicarSala() { broadcast('estadoSala', estadoSala()); }
+function iniciarDesdeSala(id) {
+  if (id !== anfitrionId || !jugadores[id]?.unido || partidaEnCurso || partidaFinalizada) return;
+  finPreparacion = Date.now() + 4000;
+  iniciarPartida(opcionesSala);
+  for (const jugador of Object.values(jugadores)) {
+    if (!jugador.unido) continue;
+    jugador.muerto = false;
+    jugador.vida = 100;
+    jugador.escudo = 0;
+    jugador.kills = 0;
+    equipoInicial(jugador);
+    Object.assign(jugador, obtenerPosicionSpawn());
+  }
+  publicarSala();
+  broadcast('inicioPartida', { tiempoRestante, preparacionRestante: Math.max(0, Math.ceil((finPreparacion - Date.now()) / 1000)) });
+}
+
 function reglasPartida() {
   return { limiteKills, duracion: duracionPartida, cantidadBots, soloJugador: modoSoloJugador, activa: partidaEnCurso, finalizada: partidaFinalizada };
 }
 
 function iniciarPartida(opciones = {}) {
   if (partidaEnCurso || partidaFinalizada) return;
+  SpecialZones.generate(MAP_WIDTH, MAP_HEIGHT, obstaculos.filter(Buildings.isBuilding));
+  broadcast('configMapa', { MAP_WIDTH, MAP_HEIGHT, obstaculos, zonasEspeciales: SpecialZones.zones });
   limiteKills = [5, 10, 20, 30].includes(opciones.limiteKills) ? opciones.limiteKills : 10;
   duracionPartida = [60, 120, 180, 300].includes(opciones.duracion) ? opciones.duracion : 120;
   modoSoloJugador = opciones.soloJugador === true;
@@ -190,29 +271,14 @@ function iniciarPartida(opciones = {}) {
   ultimoDañoZona = Date.now();
   broadcast('tiempoPartida', tiempoRestante);
   temporizadorPartida = setInterval(() => {
-    if (!partidaEnCurso) return;
+    if (!partidaEnCurso || Date.now() < finPreparacion) return;
     tiempoRestante -= 1;
     broadcast('tiempoPartida', tiempoRestante);
     if (tiempoRestante <= 0) finalizarPartida();
   }, 1000);
-  // La zona empieza a reducirse 20 s después del inicio.
-  temporizadorZona = setTimeout(function reducirZona() {
-    if (!partidaEnCurso) return;
-    const radioMin = 400;
-    if (zonaSegura.radio > radioMin) {
-      zonaSegura.fase += 1;
-      zonaSegura.dañoPorSegundo = Math.min(5, zonaSegura.fase);
-      ultimoDañoZona = Date.now();
-      zonaSegura.radio = Math.max(radioMin, zonaSegura.radio * 0.7);
-      // Mueve el centro ligeramente al azar para variar.
-      zonaSegura.x = Math.max(zonaSegura.radio, Math.min(MAP_WIDTH - zonaSegura.radio,
-        zonaSegura.x + (Math.random() - 0.5) * 400));
-      zonaSegura.y = Math.max(zonaSegura.radio, Math.min(MAP_HEIGHT - zonaSegura.radio,
-        zonaSegura.y + (Math.random() - 0.5) * 400));
-      broadcast('zonaActualizada', { ...zonaSegura });
-    }
-    if (partidaEnCurso) temporizadorZona = setTimeout(reducirZona, 25_000);
-  }, 20_000);
+  prepararCierreZona(Math.max(Date.now(), finPreparacion), ZONA_ESPERA_INICIAL);
+  zonaSegura.segundosEtapa = 20;
+  broadcast('zonaActualizada', { ...zonaSegura });
 }
 
 function finalizarPartida() {
@@ -227,11 +293,13 @@ function finalizarPartida() {
   const podio = Object.entries(jugadores)
     .filter(([, jugador]) => jugador.unido)
     .sort(([, first], [, second]) => (second.kills || 0) - (first.kills || 0))
-    .slice(0, 3)
-    .map(([id, jugador]) => ({ id, nombre: jugador.nombre, kills: jugador.kills || 0 }));
+    .map(([id, jugador]) => ({ id, nombre: jugador.nombre, skin: jugador.skin, esBot: jugador.esBot, kills: jugador.kills || 0 }));
   broadcast('finDeJuego', podio);
 
-  setTimeout(() => {
+  reiniciarMundo();
+}
+
+function reiniciarMundo() {
     for (const jugador of Object.values(jugadores)) {
       jugador.vida = 100;
       jugador.escudo = 0;
@@ -261,25 +329,45 @@ function finalizarPartida() {
     tiempoRestante = 120;
     partidaFinalizada = false;
     modoSoloJugador = false;
+    anfitrionId = null;
+    opcionesSala = {};
+    finPreparacion = 0;
     broadcast('configPartida', reglasPartida());
     broadcast('reinicioPartida', {});
-  }, 10_000);
+    publicarSala();
+}
+
+function cerrarSala(id) {
+  if (id !== anfitrionId || partidaEnCurso || partidaFinalizada) return;
+  reiniciarMundo();
 }
 
 function unirseJugador(id, nombre, client = null, skin = 'pulse', opciones = {}) {
   const jugador = jugadores[id];
   if (!jugador || jugador.esBot || jugador.unido || partidaFinalizada) return;
-  if (partidaEnCurso && (opciones.soloJugador === true) !== modoSoloJugador) {
-    const motivo = modoSoloJugador ? 'soloJugador' : 'modoIncompatible';
-    if (client) sendToClient(client, 'entradaRechazada', { motivo });
+  if (partidaEnCurso || (anfitrionId && opcionesSala.soloJugador)) {
+    if (client) sendToClient(client, 'entradaRechazada', { motivo: partidaEnCurso ? 'partidaEnCurso' : 'soloJugador' });
     return;
+  }
+  if (anfitrionId && opciones.soloJugador === true) {
+    if (client) sendToClient(client, 'entradaRechazada', { motivo: 'modoIncompatible' });
+    return;
+  }
+  if (!anfitrionId) {
+    anfitrionId = id;
+    opcionesSala = {
+      limiteKills: [5,10,20,30].includes(opciones.limiteKills) ? opciones.limiteKills : 10,
+      duracion: [60,120,180,300].includes(opciones.duracion) ? opciones.duracion : 120,
+      cantidadBots: [0,5,11,15,20].includes(opciones.cantidadBots) ? opciones.cantidadBots : 11,
+      soloJugador: opciones.soloJugador === true,
+    };
   }
   const nombreLimpio = typeof nombre === 'string' ? nombre.trim().slice(0, 16) : '';
   jugador.nombre = nombreLimpio || `Jugador_${id.slice(0, 5)}`;
   jugador.skin = skins.some((candidate) => candidate.id === skin) ? skin : 'pulse';
   jugador.unido = true;
   equipoInicial(jugador);
-  if (!partidaEnCurso) iniciarPartida(opciones);
+  publicarSala();
   // Asigna posición dentro de la zona segura al unirse
   const spawn = obtenerPosicionSpawn();
   jugador.x = spawn.x;
@@ -314,7 +402,7 @@ function obtenerPosicionSpawn() {
     const ocupado = Object.values(jugadores).some((jugador) => (
       !jugador.muerto && Math.hypot(jugador.x - x, jugador.y - y) < PLAYER_RADIUS * 3
     ));
-    if (!colisionaConObstaculo(x, y) && !ocupado) return { x, y };
+    if (!colisionaConObstaculo(x, y) && !ocupado && !SpecialZones.zones.some((zone) => Math.hypot(x - zone.x, y - zone.y) <= zone.radio + PLAYER_RADIUS)) return { x, y };
   }
 
   // Respaldo: el centro de la zona segura siempre está dentro.
@@ -436,15 +524,34 @@ function generarBot(id) {
 
 function removePlayer(id) {
   delete jugadores[id];
+  if (id === anfitrionId) {
+    anfitrionId = Object.keys(jugadores).find(key => jugadores[key].unido && !jugadores[key].esBot) || null;
+    if (!anfitrionId) opcionesSala = {};
+  }
+  publicarSala();
   broadcast('jugadorDesconectado', id);
   console.log(`Desconectado: ${id}`);
 }
 
+const tiemposMovimiento = new WeakMap();
 function updateMovement(id, { x, y, angle } = {}) {
   if (!partidaEnCurso || !jugadores[id] || jugadores[id].muerto
     || (!jugadores[id].esBot && !jugadores[id].unido)
     || ![x, y, angle].every(Number.isFinite)) return;
-  moverEntidad(jugadores[id], x, y);
+  const jugador = jugadores[id];
+  const ahora = Date.now();
+  const elapsed = Math.max(0, Math.min(0.1, (ahora - (tiemposMovimiento.get(jugador) ?? ahora - 1000 / TICK_RATE)) / 1000));
+  tiemposMovimiento.set(jugador, ahora);
+  const multiplier = SpecialZones.effects(jugador).speedMultiplier;
+  if (multiplier < 1) {
+    const distance = Math.hypot(x - jugador.x, y - jugador.y);
+    const limit = 400 * multiplier * elapsed;
+    if (distance > limit) {
+      x = jugador.x + (x - jugador.x) * limit / distance;
+      y = jugador.y + (y - jugador.y) * limit / distance;
+    }
+  }
+  moverEntidad(jugador, x, y);
   jugadores[id].angle = angle;
 }
 
@@ -597,8 +704,10 @@ function dropItem(id, { slot } = {}) {
 
 function processClientMessage(id, message, client = null) {
   if (!message || typeof message !== 'object') return;
+  if (message.type === 'cerrarSala') cerrarSala(id);
+  if (message.type === 'iniciarSala') iniciarDesdeSala(id);
   if (message.type === 'unirse') unirseJugador(id, message.data?.nombre, client, message.data?.skin, message.data);
-  if (!partidaEnCurso || !jugadores[id]?.unido) return;
+  if (!partidaEnCurso || Date.now() < finPreparacion || !jugadores[id]?.unido) return;
   if (message.type === 'movimiento') updateMovement(id, message.data);
   if (message.type === 'disparar') createBullet(id, message.data);
   if (message.type === 'cambiarSlot') selectInventorySlot(id, message.data);
@@ -624,7 +733,8 @@ if (nativeMode) {
 
     sendToClient(socket, 'identidad', { id });
     sendToClient(socket, 'configPartida', reglasPartida());
-    sendToClient(socket, 'configMapa', { MAP_WIDTH, MAP_HEIGHT, obstaculos });
+    sendToClient(socket, 'estadoSala', estadoSala());
+    sendToClient(socket, 'configMapa', { MAP_WIDTH, MAP_HEIGHT, obstaculos, zonasEspeciales: SpecialZones.zones });
 
     socket.on('message', (rawMessage) => {
       try {
@@ -644,10 +754,11 @@ if (nativeMode) {
     const { id } = socket;
     addPlayer(id);
     console.log(`Conectado: ${id}`);
-    sendToClient(socket, 'configMapa', { MAP_WIDTH, MAP_HEIGHT, obstaculos });
+    sendToClient(socket, 'configMapa', { MAP_WIDTH, MAP_HEIGHT, obstaculos, zonasEspeciales: SpecialZones.zones });
     sendToClient(socket, 'configPartida', reglasPartida());
+    sendToClient(socket, 'estadoSala', estadoSala());
 
-    for (const type of ['movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada']) {
+    for (const type of ['cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada']) {
       socket.on(type, (data) => processClientMessage(id, { type, data }, socket));
     }
     socket.on('disconnect', () => removePlayer(id));
@@ -774,8 +885,8 @@ function actualizarBots() {
     if (distanciaObjetivo > 55) {
       moverEntidad(
         bot,
-        bot.x + Math.cos(bot.angle) * (BOT_SPEED / TICK_RATE),
-        bot.y + Math.sin(bot.angle) * (BOT_SPEED / TICK_RATE),
+        bot.x + Math.cos(bot.angle) * (BOT_SPEED / TICK_RATE) * SpecialZones.effects(bot).speedMultiplier,
+        bot.y + Math.sin(bot.angle) * (BOT_SPEED / TICK_RATE) * SpecialZones.effects(bot).speedMultiplier,
       );
     }
 
@@ -843,7 +954,7 @@ function procesarGranadas() {
         if (lanzador) {
           lanzador.kills += 1;
           broadcast('kill', { asesino: lanzador.nombre, victima: jugador.nombre, arma: 'granada' });
-          if (lanzador.kills >= limiteKills) finalizarPartida();
+          if (lanzador.kills >= limiteKills) { finalizarPartida(); return; }
         }
         respawn(jugador, lanzador);
       }
@@ -882,9 +993,26 @@ setInterval(() => {
   }
 }, 10_000);
 
+function aplicarZonasEspeciales() {
+  if (!partidaEnCurso) return;
+  for (const jugador of Object.values(jugadores)) {
+    if (jugador.muerto || !jugador.unido) continue;
+    const damage = SpecialZones.effects(jugador).damagePerSecond / TICK_RATE;
+    if (!damage) continue;
+    jugador.vida = Math.max(0, jugador.vida - damage);
+    if (jugador.vida <= 0) respawn(jugador);
+  }
+}
+
 // Game loop compartido: no depende de cuál transporte esté activo.
 setInterval(() => {
+  if (!partidaEnCurso || Date.now() < finPreparacion) {
+    broadcast('estadoJuego', { jugadores, balas, plataformas, obstaculos, itemsEnSuelo, granadas, zonaSegura, cofres, preparacionRestante: Math.max(0, Math.ceil((finPreparacion - Date.now()) / 1000)) });
+    return;
+  }
+  actualizarZonaSegura();
   procesarRespawns();
+  aplicarZonasEspeciales();
   actualizarBots();
   procesarGranadas();
   aplicarDañoZona();
@@ -925,7 +1053,7 @@ setInterval(() => {
           if (propietario) {
             propietario.kills += 1;
             broadcast('kill', { asesino: propietario.nombre, victima: jugador.nombre, arma: armaActual(propietario) });
-            if (propietario.kills >= limiteKills) finalizarPartida();
+            if (propietario.kills >= limiteKills) { finalizarPartida(); return; }
           }
           respawn(jugador, propietario);
         }
@@ -954,7 +1082,7 @@ setInterval(() => {
     }
   }
 
-  broadcast('estadoJuego', { jugadores, balas, plataformas, obstaculos, itemsEnSuelo, granadas, zonaSegura, cofres });
+  broadcast('estadoJuego', { jugadores, balas, plataformas, obstaculos, itemsEnSuelo, granadas, zonaSegura, cofres, preparacionRestante: Math.max(0, Math.ceil((finPreparacion - Date.now()) / 1000)) });
 }, 1000 / TICK_RATE);
 
 function recogerObjeto(jugador, item, balas, cantidad, rareza = 0) {
@@ -1011,6 +1139,8 @@ generarMunicionMapa();
 for (const edificio of obstaculos.filter(Buildings.isBuilding)) {
   cofres.push({ id: `cofre-${cofres.length}`, x: edificio.x + edificio.width / 2, y: edificio.y + 65, abierto: false });
 }
+
+SpecialZones.generate(MAP_WIDTH, MAP_HEIGHT, obstaculos.filter(Buildings.isBuilding));
 
 server.listen(PORT, () => {
   console.log(`Servidor (${nativeMode ? 'WebSocket nativo' : 'Socket.IO'}) en http://localhost:${PORT}`);

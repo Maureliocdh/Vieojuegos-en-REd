@@ -217,6 +217,74 @@ network.on('identidad', ({ id }) => {
   network.id = id;
 });
 
+let currentRoom = null;
+let resultsPinned = false;
+let preparacionRestante = 0;
+const waitingScreen = document.getElementById('pantalla-espera');
+network.on('estadoSala', (room) => {
+  currentRoom = room;
+  if (resultsPinned) return;
+  const member = room.jugadores.some(j => j.id === network.id);
+  if (room.activa || room.finalizada) {
+    waitingScreen.hidden = true;
+    if (!member) {
+      playButton.disabled = true;
+      singlePlayerButton.disabled = true;
+      document.getElementById('connection-status').textContent = 'Partida en curso. Espera a la siguiente ronda.';
+    }
+    return;
+  }
+  soloModeLocked = !!room.reglas.soloJugador && !member;
+  playButton.disabled = !networkReady || soloModeLocked;
+  singlePlayerButton.disabled = !networkReady || !!room.anfitrionId;
+  playButton.querySelector('span').textContent = room.anfitrionId ? 'Unirse a la sala' : 'Crear sala';
+  document.querySelector('.match-settings').hidden = !!room.anfitrionId;
+  document.getElementById('skin-picker').hidden = false;
+  document.getElementById('connection-status').textContent = soloModeLocked ? 'Sala individual ocupada' : room.anfitrionId ? 'Sala disponible. Escribe tu nombre para unirte.' : 'Crea una sala para reunir a los jugadores.';
+  waitingScreen.hidden = !member;
+  if (!member) {
+    if (!gameStarted && !gameFinished) inicioScreen.style.display = 'flex';
+    return;
+  }
+  joinRequestPending = false;
+  inicioScreen.style.display = 'none';
+  finishScreen.style.display = 'none';
+  waitingScreen.hidden = false;
+  const list = document.getElementById('room-players');
+  list.replaceChildren();
+  for (const j of room.jugadores) {
+    const row = document.createElement('li');
+    const portrait = new Image(48,48);
+    const skin = GameAssets.skins.find(s => s.id === j.skin) || GameAssets.skins[0];
+    portrait.src = GameAssets.skinUrl(skin); portrait.alt = '';
+    const name = document.createElement('span');
+    name.textContent = j.nombre + (j.id === network.id ? ' (tú)' : '');
+    const badge = document.createElement('b');
+    badge.textContent = j.id === room.anfitrionId ? 'ANFITRIÓN' : 'EN SALA';
+    row.append(portrait,name,badge); list.append(row);
+  }
+  const host = room.anfitrionId === network.id;
+  document.getElementById('start-match').hidden = !host;
+  document.getElementById('close-room').hidden = !host;
+  document.getElementById('room-status').textContent = host ? 'Confirma que están todos y pulsa Iniciar partida.' : 'Esperando a que el anfitrión inicie la partida…';
+  document.getElementById('room-rules').textContent = room.jugadores.length + ' jugadores · ' + room.reglas.cantidadBots + ' bots · ' + room.reglas.limiteKills + ' bajas · ' + room.reglas.duracion / 60 + ' min';
+});
+function actualizarCuentaInicio() {
+  const overlay = document.getElementById('match-countdown');
+  overlay.hidden = preparacionRestante <= 0 || resultsPinned;
+  document.getElementById('countdown-number').textContent = preparacionRestante > 3 ? 'PREPÁRATE' : preparacionRestante;
+}
+document.getElementById('close-room').addEventListener('click', () => network.send('cerrarSala', {}));
+document.getElementById('return-home').addEventListener('click', () => {
+  resultsPinned = false;
+  network.receive('reinicioPartida', {});
+  if (currentRoom) network.receive('estadoSala', currentRoom);
+});
+
+document.getElementById('start-match').addEventListener('click', () => {
+  network.send('iniciarSala', {});
+});
+
 network.on('configPartida', (rules) => {
   const locked = rules.activa || rules.finalizada;
   for (const [id, field] of [['match-kills', 'limiteKills'], ['match-duration', 'duracion'], ['match-bots', 'cantidadBots']]) {
@@ -241,13 +309,18 @@ network.on('configPartida', (rules) => {
   }
 });
 
-network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, obstaculos: obstaculosDelServidor }) => {
+network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, obstaculos: obstaculosDelServidor, zonasEspeciales }) => {
+  if (zonasEspeciales) SpecialZones.zones.splice(0, SpecialZones.zones.length, ...zonasEspeciales);
   mapWidth = MAP_WIDTH;
   mapHeight = MAP_HEIGHT;
   obstaculos = obstaculosDelServidor || [];
 });
 
-network.on('inicioPartida', ({ tiempoRestante }) => {
+network.on('inicioPartida', ({ tiempoRestante, preparacionRestante: countdown = 0 }) => {
+  if (!currentRoom?.jugadores.some(j => j.id === network.id)) return;
+  preparacionRestante = countdown;
+  actualizarCuentaInicio();
+  waitingScreen.hidden = true;
   stopResultMusic();
   gameStarted = true;
   gameFinished = false;
@@ -268,17 +341,33 @@ network.on('finDeJuego', (podio) => {
   gameFinished = true;
   setGameVisibility(false);
   updateAudioLevels();
+  resultsPinned = true;
+  preparacionRestante = 0;
+  actualizarCuentaInicio();
   podiumList.replaceChildren();
-  playResultMusic(podio.some((jugador) => jugador.id === network.id));
+  playResultMusic(podio.slice(0, 3).some((jugador) => jugador.id === network.id));
+  const leaders = document.getElementById('result-leaders');
+  leaders.replaceChildren();
+  podio.slice(0,3).forEach((j, index) => {
+    const card = document.createElement('article');
+    const position = document.createElement('b'); position.textContent = '#' + (index + 1);
+    const portrait = new Image(96,96);
+    portrait.src = GameAssets.skinUrl(GameAssets.skins.find(s => s.id === j.skin) || GameAssets.skins[0]); portrait.alt = '';
+    const name = document.createElement('h3'); name.textContent = j.nombre;
+    const score = document.createElement('p'); score.textContent = j.kills + ' bajas';
+    card.append(position,portrait,name,score); leaders.append(card);
+  });
   podio.forEach((jugador, index) => {
     const item = document.createElement('li');
-    item.textContent = `${index + 1}. ${jugador.nombre} - ${jugador.kills} Kills`;
+    if (jugador.id === network.id) item.classList.add('own-score');
+    item.textContent = `${index + 1}. ${jugador.nombre} — ${jugador.kills} bajas`;
     podiumList.appendChild(item);
   });
   finishScreen.style.display = 'flex';
 });
 
 network.on('reinicioPartida', () => {
+  if (resultsPinned) return;
   stopResultMusic();
   gameStarted = false;
   gameFinished = false;
@@ -294,6 +383,13 @@ network.on('reinicioPartida', () => {
 });
 
 network.on('entradaRechazada', ({ motivo } = {}) => {
+  if (motivo === 'partidaEnCurso') {
+    joinRequestPending = false;
+    playButton.disabled = true;
+    singlePlayerButton.disabled = true;
+    document.getElementById('connection-status').textContent = 'Partida en curso. Espera a la siguiente ronda.';
+    return;
+  }
   joinRequestPending = false;
   soloModeLocked = motivo === 'soloJugador';
   playButton.disabled = !networkReady || soloModeLocked || gameFinished;
@@ -303,7 +399,10 @@ network.on('entradaRechazada', ({ motivo } = {}) => {
     : 'La ronda actual es multijugador; elige “Jugar ahora” para unirte';
 });
 
-network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor, cofres: cofresServidor }) => {
+const environmentalDamage = {};
+network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor, cofres: cofresServidor, preparacionRestante: countdown = 0 }) => {
+  preparacionRestante = countdown;
+  actualizarCuentaInicio();
   cofres = cofresServidor || [];
   const jugadoresAnteriores = jugadores;
   jugadores = jugadoresDelServidor;
@@ -328,8 +427,14 @@ network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelSer
       continue;
     }
 
-    if (Math.round(deltaVida) > 0 && !jugador.muerto) {
-      floatingNumbers.push({ playerId: id, x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 30, valor: `-${Math.round(deltaVida)}`, color: '#ef5350', nacido: ahora, vida: 1000 });
+    if (SpecialZones.effects(jugador).damagePerSecond === 0) delete environmentalDamage[id];
+    if (deltaVida > 0 && deltaVida < 1 && SpecialZones.effects(jugador).damagePerSecond > 0) {
+      environmentalDamage[id] = (environmentalDamage[id] || 0) + deltaVida;
+    }
+    const damageShown = deltaVida >= 1 ? Math.round(deltaVida) : Math.floor((environmentalDamage[id] || 0) + 0.0001);
+    if (damageShown > 0 && !jugador.muerto) {
+      environmentalDamage[id] = 0;
+      floatingNumbers.push({ playerId: id, x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 30, valor: `-${damageShown}`, color: '#ef5350', nacido: ahora, vida: 1000 });
       if (id === network.id) { startShake(6, 200); vibrar(40); playHit(); }
     }
     if (Math.round(deltaEscudo) > 0 && !jugador.muerto) {
@@ -407,7 +512,7 @@ async function connectNetwork() {
       socket.on('disconnect', () => setConnectionState(false));
       socket.on('connect_error', () => setConnectionState(false));
       for (const type of [
-        'configMapa', 'estadoJuego', 'jugadorDesconectado', 'inicioPartida',
+        'estadoSala', 'configMapa', 'estadoJuego', 'jugadorDesconectado', 'inicioPartida',
         'tiempoPartida', 'finDeJuego', 'reinicioPartida', 'kill', 'explosion', 'zonaActualizada',
         'configPartida', 'entradaRechazada',
       ]) {
@@ -546,6 +651,7 @@ canvas.addEventListener('mousemove', (event) => {
 
 // ----- Disparo ------------------------------------------------------------
 function shoot() {
+  if (preparacionRestante > 0) return false;
   if (!gameStarted || gameFinished) return false;
   const jugadorLocal = jugadores[network.id];
   if (!jugadorLocal || jugadorLocal.muerto || document.hidden || document.getElementById('sound-dialog').open) return false;
@@ -747,6 +853,7 @@ function createMobileControls() {
 if (isMobile) loadNippleJS().then(createMobileControls).catch(console.error);
 
 function update(deltaSeconds) {
+  if (preparacionRestante > 0) { fireHeld = false; return; }
   if (document.getElementById('sound-dialog').open) { fireHeld = false; return; }
   if (!gameStarted || gameFinished || jugadores[network.id]?.muerto) fireHeld = false;
   let moveX = movement.x;
@@ -758,8 +865,9 @@ function update(deltaSeconds) {
 
   const magnitude = Math.hypot(moveX, moveY);
   if (magnitude > 0) {
-    player.x += (moveX / magnitude) * player.speed * deltaSeconds;
-    player.y += (moveY / magnitude) * player.speed * deltaSeconds;
+    const multiplier = SpecialZones.effects(player).speedMultiplier;
+    player.x += (moveX / magnitude) * player.speed * multiplier * deltaSeconds;
+    player.y += (moveY / magnitude) * player.speed * multiplier * deltaSeconds;
     // Predicción local: el límite se aplica aquí y también de forma autoritativa en el servidor.
     player.x = Math.max(0, Math.min(mapWidth, player.x));
     player.y = Math.max(0, Math.min(mapHeight, player.y));
@@ -1017,6 +1125,16 @@ function drawMinimap() {
   ctx.beginPath();
   ctx.arc(mx + zonaSegura.x * scaleX, my + zonaSegura.y * scaleY, zonaSegura.radio * scaleX, 0, Math.PI * 2);
   ctx.stroke();
+  if (zonaSegura.objetivo) {
+    ctx.save();
+    ctx.strokeStyle = '#fff';
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.arc(mx + zonaSegura.objetivo.x * scaleX, my + zonaSegura.objetivo.y * scaleY,
+      zonaSegura.objetivo.radio * scaleX, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Obstáculos
   ctx.fillStyle = '#7a6a4a';
@@ -1222,6 +1340,17 @@ function drawZonaSegura(camX, camY) {
   const sx = zonaSegura.x - camX + window.innerWidth / 2;
   const sy = zonaSegura.y - camY + window.innerHeight / 2;
   const r = zonaSegura.radio;
+  if (zonaSegura.objetivo) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.setLineDash([10, 10]);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(zonaSegura.objetivo.x - camX + window.innerWidth / 2,
+      zonaSegura.objetivo.y - camY + window.innerHeight / 2, zonaSegura.objetivo.radio, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Overlay rojo: rectángulo completo con hueco circular usando "evenodd"
   // Esto NO usa destination-out, por lo que no borra el canvas subyacente.
@@ -1283,6 +1412,12 @@ function drawGranadas(camX, camY) {
 // ---- Borde rojo cuando vida < 25 ----
 function drawRedVignette(jugadorLocal) {
   if (!jugadorLocal || jugadorLocal.muerto) return;
+  if (gameStarted && !gameFinished && SpecialZones.effects(jugadorLocal).damagePerSecond > 0) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(200,20,20,0.18)';
+    ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+    ctx.restore();
+  }
   const vida = jugadorLocal.vida ?? 100;
   if (vida >= 25) return;
   const alpha = 0.12 + 0.22 * (1 - vida / 25) * (0.7 + 0.3 * Math.abs(Math.sin(performance.now() / 400)));
@@ -1306,6 +1441,13 @@ function drawMatchTimer() {
   const minutos = Math.floor(tiempoPartida / 60);
   const segundos = String(tiempoPartida % 60).padStart(2, '0');
   ctx.fillText(`Tiempo: ${minutos}:${segundos}`, window.innerWidth / 2, 32);
+  if (zonaSegura.estado) {
+    ctx.font = `bold ${isMobile ? 12 : 15}px sans-serif`;
+    ctx.fillStyle = zonaSegura.estado === 'cerrando' ? '#ffb58c' : '#e4f5ff';
+    const label = zonaSegura.estado === 'final' ? 'Tormenta: círculo final'
+      : `${zonaSegura.estado === 'cerrando' ? 'La tormenta se cierra' : 'Próximo cierre'}: ${zonaSegura.segundosEtapa ?? 0}s`;
+    ctx.fillText(label, window.innerWidth / 2, 53);
+  }
   ctx.restore();
 }
 
@@ -1325,6 +1467,7 @@ function draw() {
   ctx.rect(0, 0, mapWidth, mapHeight);
   ctx.clip();
   WorldArt.terrain(ctx, floorImage, mapWidth, mapHeight);
+  WorldArt.specialZones(ctx);
   ctx.restore();
 
   // Obstáculos estáticos: se dibujan antes de plataformas, balas y jugadores.

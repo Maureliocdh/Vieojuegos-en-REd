@@ -9,6 +9,44 @@
   const roofOpacity = new Map();
   window.WorldArt = {
     images,
+    specialZones(context) {
+      for (const zone of SpecialZones.zones) {
+        const ice = zone.tipo === 'hielo';
+        context.save();
+        context.beginPath();
+        if (zone.points) {
+          zone.points.forEach((point, i) => i ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y));
+          context.closePath();
+        } else context.arc(zone.x, zone.y, zone.radio, 0, Math.PI * 2);
+        const fill = context.createRadialGradient(zone.x, zone.y, 0, zone.x, zone.y, zone.radio);
+        fill.addColorStop(0, ice ? '#d5f8ffff' : '#759b16ee');
+        fill.addColorStop(1, ice ? '#77b9d9cc' : '#344d16dd');
+        context.fillStyle = fill;
+        context.fill();
+        context.strokeStyle = ice ? '#e4ffff' : '#d6ed59';
+        context.lineWidth = 4;
+        context.lineJoin = "round";
+        context.stroke();
+        context.clip();
+        context.setLineDash([]);
+        for (let i = 0; i < 24; i++) {
+          const x = zone.x - zone.radio + (i * 113 % (zone.radio * 2));
+          const y = zone.y - zone.radio + (i * 173 % (zone.radio * 2));
+          context.beginPath();
+          if (ice) {
+            context.moveTo(x - 18, y - 12); context.lineTo(x, y); context.lineTo(x - 8, y + 20);
+            context.moveTo(x, y); context.lineTo(x + 22, y - 6);
+          } else {
+            const pulse = 0.7 + 0.3 * Math.sin(performance.now() / 450 + i);
+            context.fillStyle = 'rgba(192,232,65,0.25)';
+            context.arc(x, y, (8 + i % 10) * pulse, 0, Math.PI * 2);
+            context.fill();
+          }
+          context.stroke();
+        }
+        context.restore();
+      }
+    },
     bush(context, object, observer) {
       if (!bushImage.complete || !bushImage.naturalWidth) return;
       context.save();

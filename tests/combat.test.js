@@ -10,6 +10,7 @@ function loadGame() {
   const localRequire = createRequire(serverPath);
   const timeouts = [];
   const intervals = [];
+  const messages = [];
   let now = 10000;
   class Clock extends Date { static now() { return now; } }
   const sandbox = vm.createContext({
@@ -18,17 +19,90 @@ function loadGame() {
     setInterval: (callback) => { intervals.push(callback); return intervals.length; }, clearInterval() {},
     require(name) {
       if (name === 'http') return { createServer: () => ({ listen() {} }) };
-      if (name === 'socket.io') return { Server: class { on() {} emit() {} } };
+      if (name === 'socket.io') return { Server: class { on() {} emit(type, data) { messages.push({ type, data }); } } };
       return localRequire(name);
     },
   });
   vm.runInContext(`${fs.readFileSync(serverPath, 'utf8')}\nglobalThis.testing = { jugadores, plataformas, balas, itemsEnSuelo, obstaculos, addPlayer, unirseJugador, equiparArma, createBullet, reloadWeapon, exchangeWithPlatform, dropItem, interactuar, moverEntidad, colisionaConObstaculo, respawn, recogerObjeto };`, sandbox);
   const game = sandbox.testing;
-  vm.runInContext('Object.assign(testing, { zonaSegura, aplicarDañoZona, cofres, procesarRespawns });', sandbox);
+  vm.runInContext('Object.assign(testing, { zonaSegura, actualizarZonaSegura, aplicarDañoZona, cofres, procesarRespawns, updateMovement, actualizarBots, iniciarPartida, equipoInicial, finalizarPartida, iniciarDesdeSala, estadoSala });', sandbox);
   for (const id of Object.keys(game.jugadores)) delete game.jugadores[id];
+  // Estas pruebas aíslan combate; la admisión y el inicio real se prueban por red.
+  game.unirseJugador = (id, nombre) => {
+    game.jugadores[id].unido = true;
+    game.jugadores[id].nombre = nombre;
+    game.equipoInicial(game.jugadores[id]);
+    game.iniciarPartida();
+  };
   const simulationTick = intervals.at(-1);
-  return { game, tick: simulationTick, advance: (milliseconds) => { now += milliseconds; }, finishTimeouts: () => timeouts.splice(0).forEach((callback) => callback()) };
+  return { game, messages, tick: simulationTick, advance: (milliseconds) => { now += milliseconds; }, finishTimeouts: () => timeouts.splice(0).forEach((callback) => callback()) };
 }
+
+test('Resultados incluyen todos los puestos y el reinicio limpia las puntuaciones', () => {
+  const { game, messages, finishTimeouts } = loadGame();
+  for (let i = 0; i < 5; i++) {
+    game.addPlayer(`p${i}`); game.unirseJugador(`p${i}`, `Jugador ${i}`);
+    game.jugadores[`p${i}`].kills = i;
+  }
+  game.finalizarPartida();
+  const results = messages.find(m => m.type === 'finDeJuego').data;
+  assert.equal(results.length, 5);
+  assert.equal(results[0].kills, 4);
+  assert.equal(results[4].kills, 0);
+  finishTimeouts();
+  assert.ok(Object.values(game.jugadores).every(j => j.kills === 0 && !j.unido));
+  assert.equal(game.estadoSala().anfitrionId, null);
+  assert.ok(messages.some(m => m.type === 'reinicioPartida'));
+});
+
+test('Hielo limita humanos y bots y recupera la velocidad fuera', () => {
+  const { game, advance } = loadGame();
+  game.obstaculos.length = 0;
+  game.addPlayer('human'); game.unirseJugador('human', 'Humano');
+  game.addPlayer('bot'); game.unirseJugador('bot', 'Bot');
+  const zone = require('../public/js/zones').zones.find((area) => area.tipo === 'hielo');
+  const human = game.jugadores.human;
+  const bot = game.jugadores.bot;
+  Object.assign(human, { x: zone.x, y: zone.y });
+  game.updateMovement('human', { x: zone.x + 100, y: zone.y, angle: 0 });
+  assert.ok(Math.abs(human.x - zone.x - 8) < 0.001);
+  Object.assign(bot, { x: zone.x, y: zone.y, esBot: true });
+  Object.assign(human, { x: zone.x + 150, y: zone.y });
+  game.actualizarBots();
+  assert.ok(Math.abs(bot.x - zone.x - 1.6) < 0.001);
+  Object.assign(bot, { x: zone.x + zone.radio + 30, y: zone.y });
+  Object.assign(human, { x: bot.x + 150, y: zone.y });
+  const before = bot.x;
+  game.actualizarBots();
+  assert.ok(Math.abs(bot.x - before - 80 / 30) < 0.001);
+  advance(34);
+  const targetX = human.x + 13;
+  game.updateMovement('human', { x: targetX, y: human.y, angle: 0 });
+  assert.equal(human.x, targetX);
+});
+
+test('Contaminación afecta humanos y bots solo dentro, respeta escudo y causa muerte ambiental', () => {
+  const { game, tick } = loadGame();
+  game.addPlayer('human'); game.unirseJugador('human', 'Humano');
+  game.addPlayer('bot'); game.unirseJugador('bot', 'Bot');
+  const zone = require('../public/js/zones').zones[0];
+  const human = game.jugadores.human;
+  const bot = game.jugadores.bot;
+  Object.assign(human, { x: zone.x, y: zone.y, escudo: 50 });
+  Object.assign(bot, { x: zone.x, y: zone.y, esBot: true, escudo: 50 });
+  for (let i = 0; i < 30; i++) tick();
+  assert.ok(Math.abs(human.vida - 95) < 0.001);
+  assert.ok(Math.abs(bot.vida - 95) < 0.001);
+  assert.equal(human.escudo, 50);
+  human.x = zone.x + zone.radio + 50;
+  const health = human.vida;
+  tick();
+  assert.equal(human.vida, health);
+  Object.assign(human, { x: zone.x, vida: 0.1 });
+  tick();
+  assert.equal(human.muerto, true);
+  assert.equal(bot.kills, 0);
+});
 
 test('Arbustos: ocultan desde fuera, permiten entrar y disparar hacia fuera', () => {
   const Buildings = require('../public/js/buildings.js');
@@ -51,16 +125,41 @@ test('Arbustos: ocultan desde fuera, permiten entrar y disparar hacia fuera', ()
   assert.ok(game.balas.some((bullet) => bullet.x > bush.x + bush.width));
 });
 
+test('Tormenta avisa, interpola el cierre, descansa y se detiene en el radio mínimo', () => {
+  const { game, advance } = loadGame();
+  game.addPlayer('player'); game.unirseJugador('player', 'Jugador');
+  const zone = game.zonaSegura;
+  const initial = zone.radio;
+  const target = { ...zone.objetivo };
+  assert.equal(zone.estado, 'espera');
+  assert.ok(Math.hypot(target.x - zone.x, target.y - zone.y) + target.radio <= initial);
+  advance(19999); game.actualizarZonaSegura();
+  assert.equal(zone.radio, initial);
+  advance(10001); game.actualizarZonaSegura();
+  assert.equal(zone.estado, 'cerrando');
+  assert.ok(Math.abs(zone.radio - (initial + target.radio) / 2) < 0.001);
+  advance(10000); game.actualizarZonaSegura();
+  assert.equal(zone.estado, 'espera');
+  assert.equal(zone.radio, target.radio);
+  advance(14999); game.actualizarZonaSegura();
+  assert.equal(zone.radio, target.radio);
+  advance(300000); game.actualizarZonaSegura();
+  assert.equal(zone.radio, 400);
+  assert.equal(zone.estado, 'final');
+  assert.equal(zone.objetivo, null);
+});
+
 test('Tormenta: daño entero cada segundo, fases de 1 a 5 y protección interior', () => {
-  const { game, advance, finishTimeouts } = loadGame();
+  const { game, advance } = loadGame();
   game.addPlayer('outside'); game.addPlayer('inside'); game.addPlayer('waiting');
   game.unirseJugador('outside', 'Fuera'); game.unirseJugador('inside', 'Dentro');
   const outside = game.jugadores.outside;
-  outside.x = 0; outside.y = 0; outside.escudo = 100;
+  outside.x = -100; outside.y = -100; outside.escudo = 100;
   game.aplicarDañoZona();
   assert.equal(outside.vida, 100);
   for (let phase = 1; phase <= 7; phase += 1) {
-    finishTimeouts();
+    advance(phase === 1 ? 20000 : 34000);
+    game.actualizarZonaSegura();
     const damage = Math.min(phase, 5);
     assert.equal(game.zonaSegura.dañoPorSegundo, damage);
     Object.assign(game.jugadores.inside, { x: game.zonaSegura.x, y: game.zonaSegura.y });
