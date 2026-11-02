@@ -12,10 +12,10 @@ for (const { id } of Maps.catalog) {
     const copy = Maps.create(id);
     assert.deepEqual(map, copy);
     map.obstacles[0].puertaAbierta = true;
-    assert.equal(copy.obstacles[0].puertaAbierta, false);
+    assert.notEqual(copy.obstacles[0].puertaAbierta, true);
     assert.equal(map.platforms.length, 10);
     const buildings = map.obstacles.filter(Buildings.isBuilding);
-    assert.equal(buildings.length, 12);
+    assert.equal(buildings.length, id === 'desierto' ? 4 : 12);
     for (const object of map.obstacles) {
       assert.ok(object.x >= 0 && object.y >= 0);
       assert.ok(object.x + object.width <= 6000 && object.y + object.height <= 6000);
@@ -123,7 +123,7 @@ test('Votación: 15 segundos exactos, un voto por humano, cambio de voto y mayor
   assert.equal(vote.vote('a', 'orbital', 1100), null);
   assert.equal(vote.vote('b', 'orbital', 1100), null);
   assert.equal(vote.vote('c', 'outpost', 1100), null);
-  assert.deepEqual(vote.counts(), { outpost: 1, orbital: 2 });
+  assert.deepEqual(vote.counts(), { outpost: 1, orbital: 2, desierto: 0 });
   assert.equal(vote.close(15999), false);
   assert.equal(vote.snapshot(15999).segundos, 1);
   assert.match(vote.vote('b', 'outpost', 16000), /terminó/);
@@ -134,7 +134,7 @@ test('Votación: 15 segundos exactos, un voto por humano, cambio de voto y mayor
 });
 
 test('Votación: empate, abstención y desconexión conservan reglas deterministas', () => {
-  for (const current of ['outpost', 'orbital']) {
+  for (const { id: current } of Maps.catalog) {
     const vote = new MapVote(['a', 'b'], current, 0);
     vote.vote('a', 'outpost', 0);
     vote.vote('b', 'orbital', 0);
@@ -148,4 +148,39 @@ test('Votación: empate, abstención y desconexión conservan reglas determinist
   vote.vote('a', 'orbital', 0);
   vote.close(15000);
   assert.equal(vote.ganador, 'orbital');
+});
+
+test('Desierto abierto: cuatro carpas con suministros, cactus dispersos y menos del 1,5 % ocupado', () => {
+  const map = Maps.create('desierto');
+  const tents = map.obstacles.filter(Buildings.isBuilding);
+  assert.equal(tents.length, 4);
+  assert.ok(tents.every(tent => tent.tipo === 'carpa'));
+  assert.ok(map.obstacles.filter(object => object.tipo === 'cactus').length >= 20);
+  assert.ok(map.obstacles.every(object => ['carpa', 'cactus', 'roca'].includes(object.tipo)));
+  assert.ok(map.obstacles.reduce((area, object) => area + object.width * object.height, 0) / 36000000 < 0.015);
+  assert.ok(map.obstacles.length < Maps.create('outpost').obstacles.length / 3);
+  for (const tent of tents) {
+    assert.equal(Buildings.doors(tent).length, 0);
+    const corner = { x: tent.x + 25, y: tent.y + 25 };
+    assert.equal(Buildings.inside(tent, corner), false);
+    const walls = Buildings.walls(tent);
+    assert.ok(!walls.some(wall => corner.x >= wall.x && corner.x <= wall.x + wall.width
+      && corner.y >= wall.y && corner.y <= wall.y + wall.height));
+    for (const side of [-1, 1]) {
+      const edge = { x: tent.x + tent.width / 2 + side * tent.width / 4, y: tent.y + tent.height / 2 };
+      assert.ok(walls.some(wall => edge.x >= wall.x && edge.x <= wall.x + wall.width
+        && edge.y >= wall.y && edge.y <= wall.y + wall.height));
+    }
+    const opening = Buildings.door(tent);
+    assert.ok(!Buildings.walls(tent).some(wall => opening.x + 48 >= wall.x && opening.x + 48 <= wall.x + wall.width
+      && opening.y + 9 >= wall.y && opening.y + 9 <= wall.y + wall.height));
+    assert.equal(map.platforms.filter(platform => Buildings.inside(tent, platform)).length, 2);
+  }
+  const vote = new MapVote(['a'], 'orbital', 0);
+  assert.equal(vote.vote('a', 'desierto', 0), null);
+  vote.close(15000);
+  assert.equal(vote.ganador, 'desierto');
+  for (let i = 0; i < 50; i += 1) {
+    assert.equal(Zones.generate(6000, 6000, tents).length, 8);
+  }
 });

@@ -56,6 +56,86 @@ function revivalGame() {
   return result;
 }
 
+test('Chat rápido: cuatro reacciones autoritativas, duración y límite de frecuencia', () => {
+  const { game, advance, now } = revivalGame();
+  const replies = [], client = { emit: (type, data) => replies.push({ type, data }) };
+  for (const reaccion of ['like', 'dislike', 'risa', 'enojo']) {
+    game.processClientMessage('a', { type: 'reaccion', data: { reaccion, reaccionHasta: Infinity, id: 'b' } }, client);
+    assert.equal(game.jugadores.a.reaccion, reaccion);
+    assert.equal(game.jugadores.a.reaccionHasta, now() + 3000);
+    assert.notEqual(game.jugadores.b.reaccion, reaccion);
+    advance(2000);
+  }
+  game.processClientMessage('a', { type: 'reaccion', data: { reaccion: '<script>' } }, client);
+  assert.equal(replies.at(-1).type, 'reaccionRechazada');
+  assert.match(replies.at(-1).data.motivo, /válida/);
+  game.processClientMessage('a', { type: 'reaccion', data: { reaccion: 'like' } }, client);
+  const until = game.jugadores.a.reaccionHasta;
+  game.processClientMessage('a', { type: 'reaccion', data: { reaccion: 'risa' } }, client);
+  assert.equal(game.jugadores.a.reaccion, 'like');
+  assert.equal(game.jugadores.a.reaccionHasta, until);
+  assert.match(replies.at(-1).data.motivo, /Espera/);
+  advance(1999);
+  game.processClientMessage('a', { type: 'reaccion', data: { reaccion: 'risa' } }, client);
+  assert.equal(game.jugadores.a.reaccion, 'like');
+  advance(1);
+  game.processClientMessage('a', { type: 'reaccion', data: { reaccion: 'risa' } }, client);
+  assert.equal(game.jugadores.a.reaccion, 'risa');
+});
+
+test('Chat rápido: bloqueado en preparación, muertos y espectadores; permitido abatido y limpiado entre rondas', () => {
+  const { game, advance } = loadGame();
+  game.addPlayer('a'); game.addPlayer('b');
+  game.unirseSala('a', 'A', null, 'nova', { cantidadBots: 0 });
+  game.iniciarDesdeSala('a');
+  const send = id => game.processClientMessage(id, { type: 'reaccion', data: { reaccion: 'like' } });
+  send('a'); assert.equal(game.jugadores.a.reaccion, null);
+  advance(4000);
+  send('b'); assert.equal(game.jugadores.b.reaccion, undefined);
+  game.jugadores.a.muerto = true; send('a');
+  assert.equal(game.jugadores.a.reaccion, null);
+  game.jugadores.a.muerto = false; game.jugadores.a.abatido = true; send('a');
+  assert.equal(game.jugadores.a.reaccion, 'like');
+  game.finalizarPartida();
+  assert.equal(game.jugadores.a.reaccion, null);
+  assert.equal(game.jugadores.a.reaccionHasta, 0);
+});
+
+test('Skins temáticas: el servidor admite las seis y conserva estadísticas idénticas', () => {
+  for (const id of ['duna', 'siroco', 'cosmo', 'pulsar', 'ceiba', 'ranger']) {
+    const { game } = loadGame();
+    game.addPlayer('a');
+    game.unirseSala('a', 'A', null, id, { cantidadBots: 0 });
+    game.iniciarDesdeSala('a');
+    assert.equal(game.jugadores.a.skin, id);
+    assert.equal(game.jugadores.a.vida, 100);
+    assert.equal(game.jugadores.a.escudo, 0);
+    assert.equal(game.jugadores.a.balasEnCargador, 12);
+  }
+});
+
+test('Desierto: entrada de carpa siempre libre, paredes y cactus bloquean, suministros accesibles', () => {
+  const { game, advance } = loadGame();
+  game.addPlayer('a');
+  game.unirseSala('a', 'A', null, 'duna', { mapa: 'desierto', cantidadBots: 0 });
+  game.iniciarDesdeSala('a'); advance(4000);
+  const tent = game.obstaculos.find(object => object.tipo === 'carpa');
+  const player = game.jugadores.a;
+  assert.equal(game.cofres.length, 4);
+  const centerX = tent.x + tent.width / 2;
+  assert.equal(game.colisionaConObstaculo(centerX, tent.y + tent.height), false);
+  assert.equal(game.colisionaConObstaculo(tent.x, tent.y + 100), false);
+  assert.equal(game.colisionaConObstaculo(centerX - tent.width / 4, tent.y + tent.height / 2), true);
+  Object.assign(player, { x: centerX, y: tent.y + tent.height + 40 });
+  game.updateMovement('a', { x: centerX, y: tent.y + 130, angle: 0 });
+  assert.equal(player.y, tent.y + 130);
+  game.interactuar('a');
+  assert.equal(game.cofres[0].abierto, true);
+  const cactus = game.obstaculos.find(object => object.tipo === 'cactus');
+  assert.equal(game.colisionaConObstaculo(cactus.x + cactus.width / 2, cactus.y + cactus.height / 2), true);
+  assert.equal(game.configMapa().portales.length, 0);
+});
+
 test('Portales autoritativos: ida y vuelta, cooldown, preparación, abatidos y sincronización de movimiento', () => {
   const { game, advance } = loadGame();
   game.addPlayer('a');
@@ -395,7 +475,7 @@ test('Duelo: bots ignoran compañeros incluso cuando están más cerca', () => {
   assert.equal(game.balas[0].equipo, 'azul');
 });
 
-for (const map of ['outpost', 'orbital']) {
+for (const map of ['outpost', 'orbital', 'desierto']) {
   test(`Charcos en ${map}: regeneración autoritativa por segundo, límites, muertos y preparación`, () => {
     const { game, tick, advance } = loadGame();
     game.addPlayer('a');

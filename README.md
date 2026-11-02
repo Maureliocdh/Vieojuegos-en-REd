@@ -121,7 +121,31 @@ La interfaz admite orientación vertical y horizontal. Las pruebas automatizadas
 
 En el menú puedes elegir **Isla Outpost**, el mapa original de bosques y casas, o **Estación Orbital**, una estación cerrada de 6000×6000 con doce salas sin rótulos, pasillos de 300 unidades de ancho y compuertas metálicas corredizas. Se juega con vista interior, sin techos que oculten las salas. Dos cubiertas exteriores conectadas a los pasillos permiten ver el espacio; fuera del suelo de la estación el casco bloquea movimiento y proyectiles. Las compuertas se abren y cierran individualmente con **E** o el botón de interacción móvil, no se cierran sobre jugadores y su estado se sincroniza desde el servidor. Los bots buscan rutas por los pasillos y abren las compuertas cercanas. Hay contenedores como cobertura, cofres y suministros dentro de las salas, sin árboles ni arbustos.
 
-En la estación, el peligro de veneno se sustituye por **agujeros negros animados**: infligen los mismos 5 puntos de daño por segundo, sin atracción ni muerte instantánea. El **hielo** conserva su textura agrietada y su velocidad del 60 %. Los peligros se sitúan dentro de salas transitables y el centro de la tormenta permanece sobre el suelo, para que las reapariciones finales no caigan en el espacio. La isla conserva sus zonas de contaminación e hielo originales. Ambos mapas están disponibles en Clásico, Con puzzles y Un jugador, con Socket.IO y WebSocket nativo. La selección inicial se guarda en el navegador; los invitados heredan el mapa del anfitrión.
+En la estación, el peligro de veneno se sustituye por **agujeros negros animados**: infligen los mismos 5 puntos de daño por segundo, sin atracción ni muerte instantánea. El **hielo** conserva su textura agrietada y su velocidad del 60 %. Los peligros se sitúan dentro de salas transitables y el centro de la tormenta permanece sobre el suelo, para que las reapariciones finales no caigan en el espacio. La isla conserva sus zonas de contaminación e hielo originales. Los tres mapas están disponibles en Clásico, Con puzzles, Un jugador y Duelo por equipos, con Socket.IO y WebSocket nativo. La selección inicial se guarda en el navegador; los invitados heredan el mapa del anfitrión.
+
+**Desierto Ámbar** es una tercera arena de 6000×6000, con arena y dunas, cactus dispersos y unas pocas rocas pequeñas. Solo tiene **cuatro carpas de suministros**, sin casas, edificios, árboles ni arbustos donde ocultarse. Menos del 1,5 % del terreno corresponde a obstáculos o carpas: predominan los enfrentamientos abiertos. Los cactus bloquean movimiento y disparos, pero ofrecen poca cobertura.
+
+Todas las carpas tienen silueta triangular, laterales inclinados y una entrada triangular siempre abierta. El techo de lona se transparenta al entrar; cada puesto conserva un cofre y dos puntos de suministros. Las colisiones siguen los laterales, sin esquinas rectangulares invisibles. Hay dos puntos de botín adicionales en campo abierto. Conserva tormenta, reapariciones y los ocho charcos de daño, hielo, vida y escudo; no tiene portales. Puede elegirse al crear sala o votarse para la siguiente ronda automática.
+
+En el desierto, los charcos de daño se ven como **lava**, con grietas incandescentes y burbujas, y los de ralentización como **arenas movedizas**, con remolinos de arena. Solo cambia su aspecto: siguen causando 5 de daño por segundo y reduciendo la velocidad al 60 %, respectivamente. Las zonas de vida y escudo y las texturas de los otros mapas no cambian.
+
+### Chat rápido de emojis
+
+Durante el combate, mantén **C** para abrir una rueda circular con **👍 Me gusta, 👎 No me gusta, 😂 Risa y 😠 Enojo**. Apunta con el cursor a una dirección para resaltar la reacción y **suelta C para enviarla**, sin hacer clic. Soltar en el centro cancela. El botón de carita junto a sonido y salida permite abrirla y elegir con clic o toque, también en móvil. Puedes cancelar con Escape, el centro de la rueda o tocando fuera; perder el foco cierra la rueda sin enviar.
+
+La reacción aparece sobre tu personaje durante **3 segundos**, visible para los jugadores que puedan verlo; no revela personajes ocultos en arbustos ni añade marcas al minimapa. El servidor permite una reacción cada **2 segundos** y solo acepta las cuatro opciones, sin texto libre. Funciona en todos los mapas y modos durante el combate, incluidos los jugadores abatidos, pero no durante preparación, en espectadores o muertos. Abrir la rueda detiene tus controles, no pausa la partida. Se sincroniza con Socket.IO y WebSocket nativo.
+
+### Personajes temáticos
+
+El selector conserva las seis skins anteriores y añade otras seis, con colores y accesorios propios:
+
+| Mapa de inspiración | Personajes | Detalles |
+|---|---|---|
+| Desierto Ámbar | **Duna**, **Siroco** | Pañuelo de rastreadora y capucha de nómada. |
+| Estación Orbital | **Cosmo**, **Pulsar** | Cúpula de astronauta y paneles de ingeniera orbital. |
+| Isla Outpost | **Ceiba**, **Ranger** | Hojas de camuflaje y sombrero de explorador. |
+
+Las doce son cosméticas, pueden usarse en cualquier mapa y no cambian salud, velocidad ni armas. La selección se guarda en el navegador y se sincroniza en sala, combate y resultados con ambos transportes. Los bots también usan el catálogo ampliado.
 
 Al terminar una ronda normalmente (por bajas o tiempo), aparece en los resultados una **votación de 15 segundos** para el siguiente mapa. También puedes votar desde el menú si pulsas Volver al inicio:
 
@@ -153,7 +177,7 @@ La sala muestra la distribución provisional y se vuelve a equilibrar al iniciar
 
 Cada baja enemiga suma un punto al equipo y a quien la consigue. El objetivo del menú se interpreta como **bajas por equipo**; gana quien lo alcance primero. Al agotarse el tiempo gana el equipo con más puntos; con igualdad se declara empate. Las bajas colectivas se conservan aunque un jugador abandone. Los nombres, aros, sala, marcador y resultados usan colores y etiquetas de equipo, sin cambiar las skins. El minimapa permite ver compañeros visibles aunque no disparen, sin revelar jugadores ocultos en arbustos.
 
-La votación de mapa y el inicio automático también funcionan en este modo: la siguiente ronda conserva las reglas, vuelve a equilibrar a quienes continúan y reinicia ambos marcadores. Compatible con los dos mapas, Socket.IO, WebSocket nativo y controles móviles.
+La votación de mapa y el inicio automático también funcionan en este modo: la siguiente ronda conserva las reglas, vuelve a equilibrar a quienes continúan y reinicia ambos marcadores. Compatible con los tres mapas, Socket.IO, WebSocket nativo y controles móviles.
 
 #### Compañeros abatidos y reanimación
 
@@ -202,6 +226,8 @@ La arena incluye once bots por defecto. Tras una eliminación, reapareces a los 
 El botón de **abandonar partida** (icono de salida, junto al sonido) te devuelve al menú en cualquier modalidad, incluida la sala de espera, las balizas, la tienda y la cuenta inicial. Solo sale quien lo pulsa: si quedan jugadores humanos, la ronda continúa sin reiniciarse y el anfitrión se releva cuando corresponde. Desde el menú puedes pulsar **Volver a la partida** para regresar a esa misma ronda, conservando personaje, posición, salud, equipo, bajas y progreso de preparación. La fase y el reloj siguen avanzando mientras estás fuera. Este permiso pertenece a la conexión que participó, no al nombre: funciona con Socket.IO y WebSocket nativo mientras no recargues ni cierres la página, y no permite entrar a jugadores nuevos. Si sale el último humano, la ronda se cancela, se borra el permiso de regreso y queda disponible una nueva sala.
 
 ## Controles
+
+El panel de **Configuración**, disponible desde el menú y durante la partida, incluye una guía de movimiento, combate, inventario, interacción, comunicación y controles táctiles. Es solo de consulta: no permite reasignar teclas. Los ajustes de sonido siguen disponibles en el mismo panel.
 
 ### Ordenador
 

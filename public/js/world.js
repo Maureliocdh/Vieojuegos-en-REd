@@ -12,6 +12,13 @@
   const roofOpacity = new Map();
   const hatchProgress = new Map();
   const station = ArenaMaps.stationLayout();
+  function tentOutline(context, x, y, width, height) {
+    context.beginPath();
+    context.moveTo(x + width / 2, y);
+    context.lineTo(x + width, y + height);
+    context.lineTo(x, y + height);
+    context.closePath();
+  }
   window.WorldArt = {
     images,
     setMap(id) {
@@ -45,6 +52,8 @@
       for (const zone of SpecialZones.zones) {
         if (inView && !inView(zone.x, zone.y, zone.radio)) continue;
         const ice = zone.tipo === 'hielo';
+        const lava = currentMap === 'desierto' && zone.tipo === 'contaminacion';
+        const quicksand = currentMap === 'desierto' && ice;
         const healing = zone.tipo === 'curacion', shielding = zone.tipo === 'escudo';
         const recovery = healing || shielding;
         if (zone.tipo === 'agujeroNegro') {
@@ -79,11 +88,11 @@
           context.closePath();
         } else context.arc(zone.x, zone.y, zone.radio, 0, Math.PI * 2);
         const fill = context.createRadialGradient(zone.x, zone.y, 0, zone.x, zone.y, zone.radio);
-        fill.addColorStop(0, healing ? '#55efadb8' : shielding ? '#737dffb8' : ice ? '#d5f8ffff' : '#759b16ee');
-        fill.addColorStop(1, healing ? '#116d4cbb' : shielding ? '#302b8fbb' : ice ? '#77b9d9cc' : '#344d16dd');
+        fill.addColorStop(0, healing ? '#55efadb8' : shielding ? '#737dffb8' : lava ? '#ffb52fff' : quicksand ? '#886039ff' : ice ? '#d5f8ffff' : '#759b16ee');
+        fill.addColorStop(1, healing ? '#116d4cbb' : shielding ? '#302b8fbb' : lava ? '#a92c12ff' : quicksand ? '#c29a5fff' : ice ? '#77b9d9cc' : '#344d16dd');
         context.fillStyle = fill;
         context.fill();
-        context.strokeStyle = healing ? '#a4ffcf' : shielding ? '#bcbaff' : ice ? '#e4ffff' : '#d6ed59';
+        context.strokeStyle = healing ? '#a4ffcf' : shielding ? '#bcbaff' : lava ? '#4b281e' : quicksand ? '#e0bb7e' : ice ? '#e4ffff' : '#d6ed59';
         context.lineWidth = 4;
         context.lineJoin = "round";
         context.stroke();
@@ -97,6 +106,21 @@
             const pulse = 0.5 + 0.3 * Math.sin(performance.now() / 700 + i);
             context.globalAlpha = pulse;
             context.moveTo(x - 15, y); context.quadraticCurveTo(x, y - 10, x + 20, y);
+          } else if (lava) {
+            context.strokeStyle = '#ffdf76';
+            context.lineWidth = 3;
+            context.moveTo(x - 22, y + 16); context.lineTo(x - 8, y - 5);
+            context.lineTo(x + 10, y + 3); context.lineTo(x + 23, y - 18);
+            const pulse = 0.7 + 0.3 * Math.sin(performance.now() / 600 + i);
+            context.fillStyle = '#ffec9a';
+            context.moveTo(x + 5 * pulse, y);
+            context.arc(x, y, 5 * pulse, 0, Math.PI * 2); context.fill();
+          } else if (quicksand) {
+            context.strokeStyle = i % 2 ? '#65482d99' : '#eccb8a99';
+            context.lineWidth = 3;
+            const radius = zone.radio * (0.12 + (i % 8) * 0.1);
+            context.ellipse(zone.x, zone.y, radius, radius * 0.65,
+              0, i * 0.8, i * 0.8 + Math.PI * 1.4);
           } else if (ice) {
             context.moveTo(x - 18, y - 12); context.lineTo(x, y); context.lineTo(x - 8, y + 20);
             context.moveTo(x, y); context.lineTo(x + 22, y - 6);
@@ -135,6 +159,19 @@
       context.restore();
     },
     terrain(context, image, width, height, inView) {
+      if (currentMap === 'desierto') {
+        context.fillStyle = '#d6ad70'; context.fillRect(0, 0, width, height);
+        for (let i = 0; i < 420; i += 1) {
+          const x = i * 877 % width, y = i * 1301 % height;
+          if (inView && !inView(x, y, 150)) continue;
+          context.strokeStyle = i % 2 ? '#f0ce954d' : '#9d713b26';
+          context.lineWidth = i % 3 ? 3 : 8;
+          context.beginPath(); context.moveTo(x - 100, y + 20);
+          context.quadraticCurveTo(x, y - 35, x + 120, y); context.stroke();
+          context.fillStyle = '#956f4144'; context.fillRect(x + 25, y + 40, 3, 2);
+        }
+        return;
+      }
       if (currentMap === 'orbital') {
         if (!orbitalPattern && orbitalFloor.complete && orbitalFloor.naturalWidth) orbitalPattern = context.createPattern(orbitalFloor, 'repeat');
         context.fillStyle = '#040813';
@@ -198,6 +235,33 @@
       const { x, y, width, height, tipo } = obstacle;
       const metal = currentMap === 'orbital';
       if (tipo === 'casco') return;
+      if (tipo === 'cactus') {
+        context.save();
+        context.translate(x, y);
+        context.fillStyle = '#87633644';
+        context.beginPath(); context.ellipse(width / 2 + 10, height - 2, 30, 12, 0, 0, Math.PI * 2); context.fill();
+        context.strokeStyle = '#315f42'; context.lineWidth = 13; context.lineCap = 'round';
+        context.beginPath(); context.moveTo(24, 70); context.lineTo(24, 9);
+        context.moveTo(24, 45); context.lineTo(7, 45); context.lineTo(7, 25);
+        context.moveTo(24, 32); context.lineTo(41, 32); context.lineTo(41, 17); context.stroke();
+        context.strokeStyle = '#86aa64'; context.lineWidth = 3;
+        context.beginPath(); context.moveTo(22, 65); context.lineTo(22, 12); context.stroke();
+        context.fillStyle = '#e6d19a';
+        for (let i = 0; i < 6; i += 1) context.fillRect(27, 15 + i * 9, 3, 2);
+        context.restore();
+        return;
+      }
+      if (tipo === 'carpa') {
+        context.save();
+        tentOutline(context, x, y, width, height); context.clip();
+        context.fillStyle = '#b68d59'; context.fillRect(x, y, width, height);
+        context.fillStyle = '#79653f';
+        for (const wall of Buildings.walls(obstacle)) context.fillRect(wall.x, wall.y, wall.width, wall.height);
+        context.fillStyle = '#657049'; context.fillRect(x + width / 2 - 28, y + 65, 56, 30);
+        context.fillStyle = '#d2ba7c'; context.fillRect(x + width / 2 - 21, y + 73, 42, 5);
+        context.restore();
+        return;
+      }
       if (tipo === 'contenedor') {
         context.fillStyle = '#0d1724'; context.fillRect(x + 5, y + 7, width, height);
         context.fillStyle = '#51687b'; context.fillRect(x, y, width, height);
@@ -231,6 +295,26 @@
       if (!Buildings.isBuilding(obstacle)) return;
       const { x, y, width, height, tipo } = obstacle;
       const metal = currentMap === 'orbital';
+      if (tipo === 'carpa') {
+        const opacity = Buildings.inside(obstacle, observer) ? 0.1 : 1;
+        context.save(); context.globalAlpha = opacity;
+        context.fillStyle = '#5e472344';
+        tentOutline(context, x + 10, y + 12, width, height); context.fill();
+        context.fillStyle = '#c9b17a';
+        tentOutline(context, x, y, width, height); context.fill();
+        context.fillStyle = '#9b8659';
+        context.beginPath(); context.moveTo(x + width / 2, y);
+        context.lineTo(x + width, y + height); context.lineTo(x + width / 2, y + height);
+        context.closePath(); context.fill();
+        context.strokeStyle = '#655334'; context.lineWidth = 4;
+        tentOutline(context, x, y, width, height); context.stroke();
+        context.beginPath(); context.moveTo(x + width / 2, y); context.lineTo(x + width / 2, y + height - 90); context.stroke();
+        context.fillStyle = '#3a3021';
+        tentOutline(context, x + width / 2 - 48, y + height - 90, 96, 90); context.fill();
+        context.strokeStyle = '#ead6a1'; context.lineWidth = 3; context.stroke();
+        context.restore();
+        return;
+      }
       if (metal) {
         context.fillStyle = '#8296aa';
         for (const wall of Buildings.walls({ ...obstacle, puertas: obstacle.puertas.map(door => ({ ...door, abierta: true })) })) {

@@ -66,7 +66,7 @@ test('Resultados y menú permiten votar y recibir la ronda automática en el map
     gameStarted = true;
     network.receive('finDeJuego', [{ id: network.id, nombre: 'Piloto', skin: 'nova', kills: 5 }]);
     window.testVote = { activa: true, segundos: 15, electores: [network.id],
-      votos: {}, recuento: { outpost: 0, orbital: 0 }, ganador: null };
+      votos: {}, recuento: { outpost: 0, orbital: 0, desierto: 0 }, ganador: null };
     currentRoom = { ...currentRoom, votacion: window.testVote };
     network.receive('estadoVotacion', window.testVote);
     window.voteRequests = [];

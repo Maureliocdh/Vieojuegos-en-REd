@@ -1,6 +1,7 @@
 (function (root) {
-  const isBuilding = (object) => object.tipo === 'casa' || object.tipo === 'almacen';
+  const isBuilding = (object) => object.tipo === 'casa' || object.tipo === 'almacen' || object.tipo === 'carpa';
   function doors(building) {
+    if (building.tipo === 'carpa') return [];
     if (!building.puertas) return [{ ...door(building), abierta: building.puertaAbierta, index: 0 }];
     return building.puertas.map((entry, index) => ({
       x: entry.lado === 'izquierda' ? building.x : building.x + building.width - 18,
@@ -15,6 +16,25 @@
   function walls(building) {
     if (building.tipo === 'arbusto') return [];
     if (!isBuilding(building)) return [building];
+    if (building.tipo === 'carpa') {
+      const rectangles = [];
+      const slope = building.width / (2 * building.height);
+      for (let offset = 0; offset < building.height - 18; offset += 8) {
+        const height = Math.min(8, building.height - 18 - offset);
+        const spread = (offset + height) * slope;
+        const width = 18 + height * slope;
+        rectangles.push(
+          { x: building.x + building.width / 2 - spread, y: building.y + offset, width, height },
+          { x: building.x + building.width / 2 + offset * slope - 18, y: building.y + offset, width, height },
+        );
+      }
+      const opening = door(building);
+      rectangles.push(
+        { x: building.x, y: opening.y, width: opening.x - building.x, height: 18 },
+        { x: opening.x + opening.width, y: opening.y, width: building.width / 2 - 48, height: 18 },
+      );
+      return rectangles;
+    }
     if (building.puertas) {
       const rectangles = [
         { x: building.x, y: building.y, width: building.width, height: 18 },
@@ -41,10 +61,15 @@
       { x: building.x, y: opening.y, width: opening.x - building.x, height: 18 },
       { x: opening.x + opening.width, y: opening.y, width: building.width / 2 - 48, height: 18 },
     ];
-    if (!building.puertaAbierta) rectangles.push(opening);
+    if (building.tipo !== 'carpa' && !building.puertaAbierta) rectangles.push(opening);
     return rectangles;
   }
   function inside(building, point) {
+    if (building.tipo === 'carpa') {
+      const spread = (point.y - building.y) * building.width / (2 * building.height) - 18;
+      return point.y > building.y + 18 && point.y < building.y + building.height - 18
+        && Math.abs(point.x - building.x - building.width / 2) < spread;
+    }
     return point.x > building.x + 18 && point.x < building.x + building.width - 18
       && point.y > building.y + 18 && point.y < building.y + building.height - 18;
   }

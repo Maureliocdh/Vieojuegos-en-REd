@@ -1,4 +1,10 @@
 (function (root) {
+  const reactions = [
+    { id: 'like', emoji: '👍', label: 'Me gusta' },
+    { id: 'dislike', emoji: '👎', label: 'No me gusta' },
+    { id: 'risa', emoji: '😂', label: 'Risa' },
+    { id: 'enojo', emoji: '😠', label: 'Enojo' },
+  ];
   const skins = [
     { id: 'pulse', name: 'Pulse', role: 'Corredora neón', color: '#31dfcc', accent: '#f6fbff', detail: 'visor' },
     { id: 'ronin', name: 'Ronin', role: 'Samurái digital', color: '#ef5368', accent: '#ffe29b', detail: 'horns' },
@@ -6,6 +12,12 @@
     { id: 'viper', name: 'Viper', role: 'Operadora táctica', color: '#a4dd57', accent: '#263c39', detail: 'mask' },
     { id: 'glitch', name: 'Glitch', role: 'Hacker de asfalto', color: '#ee78ce', accent: '#86f5ff', detail: 'ears' },
     { id: 'tide', name: 'Tide', role: 'Piloto abisal', color: '#4db3ed', accent: '#ffe880', detail: 'fins' },
+    { id: 'duna', name: 'Duna', role: 'Rastreadora del desierto', color: '#cda465', accent: '#6f4130', detail: 'scarf', theme: 'desierto' },
+    { id: 'siroco', name: 'Siroco', role: 'Nómada de las dunas', color: '#d78045', accent: '#f5dc9d', detail: 'hood', theme: 'desierto' },
+    { id: 'cosmo', name: 'Cosmo', role: 'Especialista de estación', color: '#b5c8e3', accent: '#6affee', detail: 'dome', theme: 'orbital' },
+    { id: 'pulsar', name: 'Pulsar', role: 'Ingeniera de órbita', color: '#746cbd', accent: '#ffe080', detail: 'solar', theme: 'orbital' },
+    { id: 'ceiba', name: 'Ceiba', role: 'Guardiana del bosque', color: '#578e55', accent: '#d3ec9b', detail: 'leaves', theme: 'outpost' },
+    { id: 'ranger', name: 'Ranger', role: 'Explorador de la isla', color: '#728b72', accent: '#deb57c', detail: 'hat', theme: 'outpost' },
   ];
   function svgUrl(content, width = 96, height = 96) {
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${content}</svg>`)}`;
@@ -18,6 +30,12 @@
       mask: '<path d="M27 60L48 80 70 60"/>',
       ears: '<path d="M24 35L21 8 42 24M56 24L76 8 72 36"/>',
       fins: '<path d="M23 33L8 31 18 61M73 33L88 31 78 61"/>',
+      scarf: '<path d="M22 30Q48 6 74 30L68 20Q48 3 28 20Z"/><path d="M25 54Q48 67 72 54L68 70 48 78 29 68Z"/><path d="M31 68L12 83 36 80Z"/>',
+      hood: '<path d="M18 45Q8 10 48 7Q88 10 78 45L70 30Q48 15 26 30Z"/><path d="M26 57H70L64 73H32Z"/><path d="M23 20Q48 9 73 20" fill="none" stroke="#fff1ba" stroke-width="4"/>',
+      dome: '<path d="M18 44Q6 6 48 5Q90 6 78 44L71 32Q48 13 25 32Z" fill="#b9f5ff" fill-opacity=".7"/><path d="M17 51V64H29M79 51V64H67" fill="none" stroke-width="7"/><rect x="39" y="69" width="18" height="9" rx="3"/>',
+      solar: '<path d="M14 30L4 17 4 58 16 66ZM82 30L92 17 92 58 80 66Z"/><path d="M6 30H14M6 43H14M82 30H90M82 43H90" fill="none"/><path d="M38 20L48 7 58 20ZM39 68L48 78 57 68Z"/>',
+      leaves: '<path d="M26 31Q6 29 8 10Q26 10 31 27ZM35 23Q24 4 42 3Q51 17 44 24ZM58 24Q59 5 78 8Q79 28 65 31Z"/><path d="M29 63L38 71 29 79M67 63L58 71 67 79" fill="none" stroke-width="5"/>',
+      hat: '<path d="M27 29L31 8H65L70 29Z"/><path d="M10 28Q48 20 86 28L79 37Q48 30 17 37Z"/><path d="M31 21H65" stroke="#6b4c30" stroke-width="5"/><path d="M42 67L48 75 54 67Z"/>',
     };
     return svgUrl(`<g transform="${portrait ? '' : 'rotate(90 48 48)'}" stroke="#162c32" stroke-width="3" stroke-linejoin="round"><ellipse cx="48" cy="76" rx="35" ry="12" fill="#102523" opacity=".2"/><rect x="12" y="51" width="21" height="26" rx="9" fill="${skin.color}"/><rect x="63" y="51" width="21" height="26" rx="9" fill="${skin.color}"/><path d="M27 49Q48 40 69 49L70 77Q48 87 26 77Z" fill="${skin.color}"/><path d="M37 61H59V80H37Z" fill="#263e43"/><circle cx="48" cy="42" r="27" fill="${skin.color}"/><g fill="${skin.accent}">${ornaments[skin.detail]}</g><path d="M24 37Q48 26 72 37L67 52Q48 60 29 52Z" fill="#19353d"/><path d="M30 40L44 38M53 38L65 40" stroke="${skin.accent}" stroke-width="5"/><path d="M33 24Q45 18 56 22" fill="none" stroke="#fff" opacity=".55"/><path d="M42 67H54" stroke="${skin.accent}" stroke-width="4"/></g>`);
   }
@@ -40,7 +58,7 @@
     }
     return svgUrl(`<g stroke="#203b40" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">${itemArt[item] || itemArt['puños']}</g>`);
   }
-  const api = { skins, skinUrl, svgUrl, itemUrl };
+  const api = { skins, reactions, skinUrl, svgUrl, itemUrl };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.GameAssets = api;
 }(typeof window !== 'undefined' ? window : globalThis));

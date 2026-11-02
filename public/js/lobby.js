@@ -14,6 +14,7 @@
     save() { try { localStorage.setItem('outpost-settings', JSON.stringify(this)); } catch {} },
   };
   const picker = document.getElementById('skin-picker');
+  document.getElementById('skin-count').textContent = `${String(GameAssets.skins.length).padStart(2, '0')} / DISPONIBLES`;
   window.selectArenaMap = (id, persist = false) => {
     const map = ArenaMaps.catalog.find(map => map.id === id);
     if (!map) return;
@@ -22,7 +23,8 @@
     document.getElementById('map-name').textContent = map.nombre;
     document.getElementById('map-description').textContent = map.descripcion;
     document.body.dataset.map = id;
-    document.querySelector('.lobby-title .eyebrow').textContent = id === 'orbital' ? 'SECTOR 07 / ÓRBITA ALTA' : 'TEMPORADA 01 / TIERRA ABIERTA';
+    document.querySelector('.lobby-title .eyebrow').textContent = id === 'orbital' ? 'SECTOR 07 / ÓRBITA ALTA'
+      : id === 'desierto' ? 'SECTOR 03 / DESIERTO ÁMBAR' : 'TEMPORADA 01 / TIERRA ABIERTA';
     document.querySelector('.lobby-footer > span:first-child').textContent = map.nombre.toUpperCase();
     if (persist) { ui.mapa = id; ui.save(); }
   };
@@ -74,7 +76,8 @@
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.skin = skin.id;
-    button.title = skin.name;
+    button.title = `${skin.name} · ${skin.role}`;
+    if (skin.theme) button.dataset.theme = skin.theme;
     button.setAttribute('aria-label', skin.name);
     const image = new Image(68, 68);
     image.alt = '';

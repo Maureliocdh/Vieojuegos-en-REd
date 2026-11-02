@@ -1,5 +1,44 @@
 const { test, expect } = require('@playwright/test');
 
+test('Configuración: guía de controles de solo consulta en menú y partida', async ({ page }, testInfo) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.locator('#jugar-button')).toBeEnabled();
+  await page.locator('.lobby-header .settings-trigger').click();
+  const dialog = page.getByRole('dialog', { name: 'Configuración', exact: true });
+  const guide = page.locator('#controls-guide');
+  await expect(dialog).toBeVisible();
+  await expect(guide).toContainText('Los controles no se pueden editar');
+  await expect(guide.locator('input, select, textarea, button, [contenteditable=true]')).toHaveCount(0);
+  for (const heading of ['Movimiento', 'Combate e inventario', 'Interacción y equipo', 'Comunicación', 'En móvil']) {
+    await guide.getByRole('heading', { name: heading, exact: true }).scrollIntoViewIfNeeded();
+    await expect(guide.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+  }
+  await expect(guide).toContainText('soltar C lo envía');
+  await expect(guide).toContainText('Joystick derecho');
+  expect(await dialog.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return element.scrollWidth <= element.clientWidth && bounds.left >= 0 && bounds.right <= innerWidth
+      && bounds.top >= 0 && bounds.bottom <= innerHeight;
+  })).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('settings-controls.png') });
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  await page.locator('#nickname').fill('Controles');
+  await page.locator('#match-bots').selectOption('0');
+  await page.locator('#jugar-button').click();
+  await page.locator('#start-match').click();
+  await expect(page.locator('#game-settings')).toBeVisible();
+  await page.locator('#game-settings').click();
+  await expect(dialog).toBeVisible();
+  await expect(guide).toContainText('Mantener');
+  await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.locator('#leave-match').click();
+  expect(errors).toEqual([]);
+});
+
 test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context }, testInfo) => {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -30,7 +69,7 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
     await page.locator('#match-duration').selectOption('180');
     await page.locator('#match-bots').selectOption('5');
   }
-  await page.getByRole('button', { name: 'Ajustes de sonido' }).click();
+  await page.getByRole('button', { name: 'Configuración: sonido y controles' }).click();
   await page.locator('#volume-master').fill('35');
   await page.locator('#volume-effects').fill('45');
   await page.locator('#volume-ambient').fill('15');
@@ -132,7 +171,7 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
   await page.keyboard.press('g');
   expect(await page.evaluate(() => jugadores[network.id].inventario[0])).toBe('puños');
   expect(await page.evaluate(() => masterGain.gain.value)).toBe(0);
-  await page.getByRole('button', { name: 'Ajustes de sonido' }).click();
+  await page.getByRole('button', { name: 'Configuración: sonido y controles' }).click();
   await page.locator('#mute-audio').uncheck();
   await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
   expect(await page.evaluate(() => Math.round(masterGain.gain.value * 100))).toBe(35);

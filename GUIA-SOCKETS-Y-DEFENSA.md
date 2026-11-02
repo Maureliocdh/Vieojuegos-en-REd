@@ -77,7 +77,7 @@ Navegador
 | [public/js/weapon-audio.js](./public/js/weapon-audio.js) | Muestras sintetizadas por arma, voces limitadas y reproducción estéreo; el estado del servidor confirma el tipo de disparo remoto con `ultimoDisparoArma`. |
 | [public/js/lobby.js](./public/js/lobby.js) | Preferencias del menú, personaje, reglas y ajustes de sonido. |
 | [lib/tactical.js](./lib/tactical.js) | Fases de preparación, balizas, créditos y compras. |
-| [public/js/maps.js](./public/js/maps.js) | Catálogo y geometría de Isla Outpost y Estación Orbital, compartidos entre transportes. |
+| [public/js/maps.js](./public/js/maps.js) | Catálogo y geometría de Isla Outpost, Estación Orbital y Desierto Ámbar, compartidos entre transportes. Las carpas reutilizan colisiones e interiores, sin puertas que abrir. |
 | [public/js/teams.js](./public/js/teams.js) | Balance de humanos y bots entre Azul y Rojo y reglas compartidas para identificar compañeros. El servidor asigna los equipos y cuenta bajas colectivas; no acepta el equipo elegido por un cliente. |
 | [lib/map-vote.js](./lib/map-vote.js) | Votación autoritativa del siguiente mapa durante 15 segundos. |
 | [lib/navigation.js](./lib/navigation.js) | Rutas de bots por el suelo transitable de la estación, considerando las compuertas como pasos que pueden abrir. |

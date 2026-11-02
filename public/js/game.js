@@ -770,7 +770,7 @@ async function connectNetwork() {
       for (const type of [
         'estadoSala', 'configMapa', 'estadoJuego', 'jugadorDesconectado', 'inicioPartida',
         'tiempoPartida', 'finDeJuego', 'reinicioPartida', 'kill', 'explosion', 'zonaActualizada',
-        'configPartida', 'entradaRechazada', 'salidaPartida', 'estadoVotacion', 'votoRechazado',
+        'configPartida', 'entradaRechazada', 'salidaPartida', 'estadoVotacion', 'votoRechazado', 'reaccionRechazada',
       ]) {
         socket.on(type, (data) => network.receive(type, data));
       }
@@ -823,6 +823,11 @@ function setConnectionState(ready) {
 }
 
 function setGameVisibility(visible) {
+  document.getElementById('quick-chat').hidden = !visible;
+  if (!visible) {
+    document.getElementById('reaction-wheel').close();
+    document.getElementById('reaction-status').hidden = true;
+  }
   document.getElementById('game-settings').hidden = !visible;
   document.getElementById('leave-match').hidden = !visible;
   const elements = [scoreboard, swapButton, reloadButton, respawnMessage,
@@ -886,12 +891,86 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
+const reactionWheel = document.getElementById('reaction-wheel');
+const reactionStatus = document.getElementById('reaction-status');
+let reactionStatusTimer;
+let reactionKeyHeld = false;
+let selectedReaction = null;
+let reactionPointer = null;
+function selectReactionAtPointer() {
+  const bounds = reactionWheel.getBoundingClientRect();
+  const dx = reactionPointer ? reactionPointer.x - bounds.x - bounds.width / 2 : 0;
+  const dy = reactionPointer ? reactionPointer.y - bounds.y - bounds.height / 2 : 0;
+  const index = (Math.round(Math.atan2(dy, dx) / (Math.PI / 2)) + 1 + 4) % 4;
+  selectedReaction = Math.hypot(dx, dy) > 30 ? GameAssets.reactions[index].id : null;
+  for (const button of reactionWheel.querySelectorAll('[data-reaction]')) {
+    button.classList.toggle('selected', button.dataset.reaction === selectedReaction);
+  }
+}
+function showReactionStatus(message) {
+  reactionStatus.textContent = message;
+  reactionStatus.hidden = false;
+  clearTimeout(reactionStatusTimer);
+  reactionStatusTimer = setTimeout(() => { reactionStatus.hidden = true; }, 2500);
+}
+network.on('reaccionRechazada', ({ motivo }) => showReactionStatus(motivo));
+function openReactions() {
+  if (!gameStarted || gameFinished || preparacionRestante > 0 || !jugadores[network.id]?.unido
+    || jugadores[network.id].muerto || document.getElementById('sound-dialog').open
+    || (window.tacticalState && window.tacticalState.phase !== 'combate')) return;
+  keys.clear(); fireHeld = false; stopReviving();
+  Object.assign(movement, { x: 0, y: 0 });
+  Object.assign(aim, { x: 0, y: 0 });
+  selectedReaction = null;
+  if (!reactionWheel.open) reactionWheel.showModal();
+  document.getElementById('close-reactions').focus({ preventScroll: true });
+  selectReactionAtPointer();
+}
+for (const reaction of GameAssets.reactions) {
+  const button = document.createElement('button');
+  button.type = 'button'; button.textContent = reaction.emoji;
+  button.dataset.reaction = reaction.id;
+  button.setAttribute('aria-label', reaction.label);
+  button.addEventListener('click', () => {
+    if (reactionKeyHeld) return;
+    network.send('reaccion', { reaccion: reaction.id });
+    reactionWheel.close();
+  });
+  reactionWheel.querySelector('.reaction-circle').append(button);
+}
+document.getElementById('quick-chat').addEventListener('click', openReactions);
+document.getElementById('close-reactions').addEventListener('click', () => reactionWheel.close());
+reactionWheel.addEventListener('click', event => {
+  if (event.target !== reactionWheel) return;
+  const bounds = reactionWheel.getBoundingClientRect();
+  if (Math.hypot(event.clientX - bounds.x - bounds.width / 2,
+    event.clientY - bounds.y - bounds.height / 2) > bounds.width / 2) reactionWheel.close();
+});
+document.addEventListener('pointermove', event => {
+  reactionPointer = { x: event.clientX, y: event.clientY };
+  if (reactionWheel.open) selectReactionAtPointer();
+});
+reactionWheel.addEventListener('close', () => {
+  keys.clear(); fireHeld = false; reactionKeyHeld = false; selectedReaction = null;
+});
+window.addEventListener('blur', () => reactionWheel.close());
+document.addEventListener('visibilitychange', () => { if (document.hidden) reactionWheel.close(); });
+
 // ----- Controles de PC ----------------------------------------------------
 window.addEventListener('keydown', (event) => {
   // Mientras se escribe el nickname, las teclas WASD deben comportarse como texto normal.
   const elementoEscritura = event.target instanceof HTMLInputElement
     || event.target instanceof HTMLTextAreaElement;
   if (elementoEscritura) return;
+  if (event.code === 'KeyC') {
+    event.preventDefault();
+    if (!event.repeat) {
+      if (!reactionWheel.open) openReactions();
+      reactionKeyHeld = reactionWheel.open;
+    }
+    return;
+  }
+  if (reactionWheel.open) return;
 
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'KeyE', 'KeyR', 'KeyG', 'KeyF'].includes(event.code)) event.preventDefault();
   keys.add(event.code);
@@ -902,7 +981,14 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyG' && !event.repeat) dropCurrentItem();
   if (event.code === 'KeyF' && !event.repeat) throwGrenade();
 });
-window.addEventListener('keyup', (event) => keys.delete(event.code));
+window.addEventListener('keyup', (event) => {
+  keys.delete(event.code);
+  if (event.code !== 'KeyC' || !reactionKeyHeld) return;
+  reactionKeyHeld = false;
+  if (!reactionWheel.open) return;
+  if (selectedReaction) network.send('reaccion', { reaccion: selectedReaction });
+  reactionWheel.close();
+});
 window.addEventListener('blur', () => { keys.clear(); stopReviving(); });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { keys.clear(); stopReviving(); }
@@ -919,7 +1005,7 @@ function shoot() {
   if (!gameStarted || gameFinished) return false;
   const jugadorLocal = jugadores[network.id];
   if (!jugadorLocal || jugadorLocal.muerto || jugadorLocal.abatido || jugadorLocal.reanimando || reviveSending
-    || document.hidden || document.getElementById('sound-dialog').open) return false;
+    || document.hidden || reactionWheel.open || document.getElementById('sound-dialog').open) return false;
   const arma = jugadorLocal?.inventario?.[jugadorLocal.slotSeleccionado] || 'puños';
   const cooldown = STATS_ARMAS_CLIENTE[arma]?.cooldown || STATS_ARMAS_CLIENTE['puños'].cooldown;
   const ahora = performance.now();
@@ -968,7 +1054,7 @@ function shoot() {
 
 /** Lanza la granada del inventario. Tecla F en PC, botón en móvil. */
 function throwGrenade() {
-  if (!gameStarted || gameFinished) return;
+  if (!gameStarted || gameFinished || reactionWheel.open) return;
   const jugadorLocal = jugadores[network.id];
   if (!jugadorLocal || jugadorLocal.muerto || jugadorLocal.abatido || jugadorLocal.reanimando || reviveSending) return;
   const slotGranada = jugadorLocal.inventario?.indexOf('granada');
@@ -983,13 +1069,14 @@ function throwGrenade() {
 }
 
 function requestReload() {
+  if (reactionWheel.open) return;
   const jugador = jugadores[network.id];
   if (gameStarted && jugador && !jugador.muerto && !jugador.abatido && !jugador.reanimando && !reviveSending) network.send('recargar', {});
 }
 
 /** Tira el item del slot actual al suelo. Tecla G en PC, botón en móvil. */
 function dropCurrentItem() {
-  if (!gameStarted || gameFinished) return;
+  if (!gameStarted || gameFinished || reactionWheel.open) return;
   const jugadorLocal = jugadores[network.id];
   if (!jugadorLocal || jugadorLocal.muerto || jugadorLocal.abatido || jugadorLocal.reanimando || reviveSending) return;
   const slot = jugadorLocal.slotSeleccionado;
@@ -1010,7 +1097,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) fireH
 
 /** Cambia el slot local para respuesta inmediata y lo sincroniza por el transporte activo. */
 function selectSlot(slot) {
-  if (!gameStarted || !Number.isInteger(slot) || slot < 0 || slot > 4) return;
+  if (!gameStarted || reactionWheel.open || !Number.isInteger(slot) || slot < 0 || slot > 4) return;
   const jugadorLocal = jugadores[network.id];
   if (!jugadorLocal || jugadorLocal.muerto || jugadorLocal.abatido || jugadorLocal.reanimando || reviveSending) return;
   if (jugadorLocal) jugadorLocal.slotSeleccionado = slot;
@@ -1068,7 +1155,7 @@ function actualizarMensajeRespawn(jugadorLocal) {
 }
 
 function attemptExchange() {
-  if (!gameStarted || gameFinished) return;
+  if (!gameStarted || gameFinished || reactionWheel.open) return;
   const jugadorLocal = jugadores[network.id];
   if (jugadorLocal?.abatido || getNearbyDowned(jugadorLocal)) return;
   if (getNearbyPortal(jugadorLocal) || getNearbyChest(jugadorLocal) || getNearbyDoor(jugadorLocal) || getNearbyLootPlatform(jugadorLocal)) network.send('intercambiar', {});
@@ -1150,7 +1237,7 @@ if (isMobile) loadNippleJS().then(createMobileControls).catch(console.error);
 
 function update(deltaSeconds) {
   if (preparacionRestante > 0 || (window.tacticalState && ['instrucciones', 'puzzles', 'tienda'].includes(window.tacticalState.phase))) { fireHeld = false; stopReviving(); return; }
-  if (document.getElementById('sound-dialog').open) { fireHeld = false; stopReviving(); return; }
+  if (document.getElementById('sound-dialog').open || reactionWheel.open) { fireHeld = false; stopReviving(); return; }
   const canRevive = gameStarted && !gameFinished && !document.hidden
     && (keys.has('KeyE') || reviveHeld) && getNearbyDowned(jugadores[network.id]);
   if (canRevive) {
@@ -1423,7 +1510,7 @@ function drawMinimap() {
   ctx.clip();
 
   // Suelo
-  ctx.fillStyle = WorldArt.map === 'orbital' ? '#1d3046' : '#2a3a2a';
+  ctx.fillStyle = WorldArt.map === 'orbital' ? '#1d3046' : WorldArt.map === 'desierto' ? '#d6ad70' : '#2a3a2a';
   ctx.fillRect(mx, my, MM_W, MM_H);
   if (WorldArt.map === 'orbital') {
     const layout = ArenaMaps.stationLayout();
@@ -1454,6 +1541,14 @@ function drawMinimap() {
   ctx.fillStyle = '#7a6a4a';
   for (const obs of obstaculos) {
     if (WorldArt.map === 'orbital' && (obs.tipo === 'casco' || Buildings.isBuilding(obs))) continue;
+    if (obs.tipo === 'carpa') {
+      ctx.beginPath();
+      ctx.moveTo(mx + (obs.x + obs.width / 2) * scaleX, my + obs.y * scaleY);
+      ctx.lineTo(mx + (obs.x + obs.width) * scaleX, my + (obs.y + obs.height) * scaleY);
+      ctx.lineTo(mx + obs.x * scaleX, my + (obs.y + obs.height) * scaleY);
+      ctx.closePath(); ctx.fill();
+      continue;
+    }
     ctx.fillRect(
       mx + obs.x * scaleX,
       my + obs.y * scaleY,
@@ -1941,6 +2036,17 @@ function draw() {
     ctx.fillStyle = team ? team.color : jugador.esBot ? '#ffb74d' : '#fff';
     ctx.fillText(playerLabel, jugador.x, jugador.y - spriteHalfH - 28);
     ctx.restore();
+
+    const reaction = jugador.reaccionHasta > Date.now()
+      ? GameAssets.reactions.find(candidate => candidate.id === jugador.reaccion) : null;
+    if (reaction) {
+      ctx.save();
+      ctx.fillStyle = '#112d28ee'; ctx.strokeStyle = '#e4f0d7'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(jugador.x, jugador.y - 100, 25, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.font = '30px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(reaction.emoji, jugador.x, jugador.y - 100);
+      ctx.restore();
+    }
 
     // Barra de salud
     const barWidth = 56;

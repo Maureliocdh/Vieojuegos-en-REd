@@ -59,7 +59,7 @@ test('Duelo persistente: sala, colores, marcador, reingreso y resultado del equi
   expect(errors).toEqual([]);
 });
 
-test('Charcos de vida y escudo: polígonos, renderizado y escudo real en los dos mapas', async ({ page }, testInfo) => {
+test('Charcos de vida y escudo: polígonos, renderizado y escudo real en los tres mapas', async ({ page }, testInfo) => {
   test.setTimeout(40000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -68,7 +68,7 @@ test('Charcos de vida y escudo: polígonos, renderizado y escudo real en los dos
   await page.locator('#nickname').fill('Explorador');
   await page.locator('[data-mode=clasico]').click();
   await page.locator('#match-bots').selectOption('0');
-  for (const map of ['outpost', 'orbital']) {
+  for (const map of ['outpost', 'orbital', 'desierto']) {
     await page.locator('#match-map').selectOption(map);
     await page.locator('#jugar-button').click();
     await page.locator('#start-match').click();

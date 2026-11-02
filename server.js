@@ -6,7 +6,7 @@ const Maps = require('./public/js/maps');
 const Teams = require('./public/js/teams');
 const express = require('express');
 const http = require('http');
-const { skins } = require('./public/js/assets.js');
+const { skins, reactions } = require('./public/js/assets.js');
 const Buildings = require('./public/js/buildings.js');
 const SpecialZones = require('./public/js/zones.js');
 
@@ -46,6 +46,8 @@ const nuevasReservas = () => ({ pistola: 0, rifle: 0, sniper: 0, escopeta: 0 });
 const cofres = [];
 const rarezaAleatoria = () => { const valor = Math.random(); return valor < 0.65 ? 0 : valor < 0.9 ? 1 : 2; };
 function equipoInicial(jugador) {
+  jugador.reaccion = null;
+  jugador.reaccionHasta = 0;
   jugador.portalHasta = 0;
   jugador.portalMovimientoHasta = 0;
   jugador.inventario = ['puños', 'pistola', null, null, null];
@@ -1014,6 +1016,23 @@ function dropItem(id, { slot } = {}) {
   if (slotIndex === jugador.slotSeleccionado) equiparArma(jugador);
 }
 
+const ultimasReacciones = new WeakMap();
+function enviarReaccion(id, data, client) {
+  const jugador = jugadores[id];
+  if (!jugador?.unido || jugador.muerto) return;
+  if (!reactions.some(reaction => reaction.id === data?.reaccion)) {
+    if (client) sendToClient(client, 'reaccionRechazada', { motivo: 'Reacción no válida.' });
+    return;
+  }
+  if (Date.now() - (ultimasReacciones.get(jugador) ?? -Infinity) < 2000) {
+    if (client) sendToClient(client, 'reaccionRechazada', { motivo: 'Espera un momento antes de enviar otra reacción.' });
+    return;
+  }
+  ultimasReacciones.set(jugador, Date.now());
+  jugador.reaccion = data.reaccion;
+  jugador.reaccionHasta = Date.now() + 3000;
+}
+
 function processClientMessage(id, message, client = null) {
   if (!message || typeof message !== 'object') return;
   if (message.type === 'votarMapa') {
@@ -1035,6 +1054,7 @@ function processClientMessage(id, message, client = null) {
   if (message.type === 'iniciarSala') iniciarDesdeSala(id);
   if (message.type === 'unirse') unirseJugador(id, message.data?.nombre, client, message.data?.skin, message.data);
   if (!partidaEnCurso || Date.now() < finPreparacion || !jugadores[id]?.unido) return;
+  if (message.type === 'reaccion') enviarReaccion(id, message.data, client);
   if (message.type === 'movimiento') updateMovement(id, message.data);
   if (message.type === 'reanimar') reanimar(id, message.data);
   if (message.type === 'disparar') createBullet(id, message.data);
@@ -1086,7 +1106,7 @@ if (nativeMode) {
     sendToClient(socket, 'configPartida', reglasPartida());
     sendToClient(socket, 'estadoSala', estadoSala());
 
-    for (const type of ['votarMapa', 'abandonarPartida', 'moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada', 'reanimar']) {
+    for (const type of ['votarMapa', 'abandonarPartida', 'moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada', 'reanimar', 'reaccion']) {
       socket.on(type, (data) => processClientMessage(id, { type, data }, socket));
     }
     socket.on('disconnect', () => removePlayer(id));

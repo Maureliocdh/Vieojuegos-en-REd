@@ -2,6 +2,7 @@
   const catalog = [
     { id: 'outpost', nombre: 'Isla Outpost', descripcion: 'Bosques, casas y caminos abiertos.' },
     { id: 'orbital', nombre: 'Estación Orbital', descripcion: 'Salas conectadas por pasillos, compuertas y esclusas exteriores.' },
+    { id: 'desierto', nombre: 'Desierto Ámbar', descripcion: 'Dunas, cactus y pocas carpas de suministros. Cobertura escasa.' },
   ];
   const valid = id => typeof id === 'string' && catalog.some(map => map.id === id);
   function stationLayout() {
@@ -60,6 +61,26 @@
   function create(id) {
     if (!valid(id)) throw new Error(`Mapa desconocido: ${id}`);
     if (id === 'orbital') return createStation();
+    if (id === 'desierto') {
+      const obstacles = [[1100, 1000], [4300, 1100], [1400, 4400], [4200, 4200]]
+        .map(([x, y], index) => ({ id: `carpa-${index}`, tipo: 'carpa', x, y, width: 340, height: 260 }));
+      const platforms = obstacles.flatMap(tent => [
+        { x: tent.x + 100, y: tent.y + 190, objeto: null },
+        { x: tent.x + 240, y: tent.y + 190, objeto: null },
+      ]);
+      platforms.push({ x: 2600, y: 2400, objeto: null }, { x: 3400, y: 3600, objeto: null });
+      for (let i = 0; i < 32; i += 1) {
+        const object = { id: `desierto-${i}`, tipo: i < 26 ? 'cactus' : 'roca',
+          x: 300 + i * 977 % 5400, y: 320 + i * 1511 % 5300,
+          width: i < 26 ? 48 : 65, height: i < 26 ? 76 : 50 };
+        if (obstacles.some(other => object.x < other.x + other.width + 140
+          && object.x + object.width + 140 > other.x && object.y < other.y + other.height + 140
+          && object.y + object.height + 140 > other.y)) continue;
+        if (platforms.some(platform => Math.hypot(platform.x - object.x, platform.y - object.y) < 160)) continue;
+        obstacles.push(object);
+      }
+      return { platforms, obstacles, portals: [] };
+    }
     const platforms = [[900, 900], [3000, 900], [5100, 1500], [1500, 4500], [4200, 4800],
         [2400, 2400], [4800, 3000], [1200, 3000], [3600, 1800], [3000, 5400]]
       .map(([x, y]) => ({ x, y, objeto: null }));
