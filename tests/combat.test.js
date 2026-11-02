@@ -37,7 +37,7 @@ function loadGame() {
     game.iniciarPartida();
   };
   const simulationTick = intervals.at(-1);
-  return { game, messages, tick: simulationTick, advance: (milliseconds) => { now += milliseconds; }, finishTimeouts: () => timeouts.splice(0).forEach((callback) => callback()) };
+  return { game, messages, tick: simulationTick, now: () => now, advance: (milliseconds) => { now += milliseconds; }, finishTimeouts: () => timeouts.splice(0).forEach((callback) => callback()) };
 }
 
 test('Resultados incluyen todos los puestos y el reinicio limpia las puntuaciones', () => {
@@ -105,6 +105,112 @@ test('Un jugador conserva combate clásico y no permite invitados aunque se soli
   assert.equal(game.tactical(), null);
   assert.equal(game.estadoSala().reglas.modoArena, 'clasico');
 });
+
+for (const [phase, elapsed] of [['instrucciones', 0], ['puzzles', 10000], ['tienda', 65000], ['cuenta', 85000], ['combate', 89000]]) {
+  test(`Abandonar durante ${phase} no reinicia la ronda de los demás`, () => {
+    const { game, messages, advance, now } = loadGame();
+    for (const id of ['host', 'guest']) {
+      game.addPlayer(id);
+      game.unirseSala(id, id, null, 'pulse', { modoArena: 'puzzles', cantidadBots: 5, dificultadBots: 'dificil' });
+    }
+    game.iniciarDesdeSala('host');
+    advance(elapsed);
+    const tactical = game.tactical();
+    assert.equal(tactical.phase(now()).phase, phase);
+    const guest = game.jugadores.guest;
+    const host = game.jugadores.host;
+    Object.assign(host, { kills: 2, vida: 37, escudo: 15 });
+    const account = tactical.accounts.get('host');
+    account.credits = 125;
+    guest.kills = 3;
+    game.balas.push({ propietarioId: 'host' }, { propietarioId: 'guest' });
+    messages.length = 0;
+    const replies = [];
+    game.processClientMessage('host', { type: 'abandonarPartida' }, { emit: (type, data) => replies.push({ type, data }) });
+    assert.equal(replies[0].type, 'salidaPartida');
+    assert.equal(game.estadoSala().activa, true);
+    assert.equal(game.estadoSala().anfitrionId, 'guest');
+    assert.equal(game.jugadores.guest, guest);
+    assert.equal(guest.kills, 3);
+    assert.equal(game.jugadores.host.unido, false);
+    assert.equal(game.tactical(), tactical);
+    assert.equal(tactical.accounts.has('host'), false);
+    assert.equal(tactical.accounts.has('guest'), true);
+    assert.equal(game.balas.length, 1);
+    assert.equal(game.balas[0].propietarioId, 'guest');
+    assert.equal(messages.some(m => ['reinicioPartida', 'finDeJuego'].includes(m.type)), false);
+    game.processClientMessage('host', { type: 'comprarEquipo', data: { item: 'rifle' } });
+    assert.equal(game.jugadores.host.inventario.includes('rifle'), false);
+    assert.ok(game.estadoSala().reingresos.includes('host'));
+    replies.length = 0;
+    game.unirseSala('host', 'Otro nombre', { emit: (type, data) => replies.push({ type, data }) }, 'nova', { cantidadBots: 20 });
+    assert.equal(game.jugadores.host, host);
+    assert.equal(host.vida, 37);
+    assert.equal(host.escudo, 15);
+    assert.equal(host.kills, 2);
+    assert.equal(host.nombre, 'host');
+    assert.equal(tactical.accounts.get('host'), account);
+    assert.equal(account.credits, 125);
+    assert.equal(account.training.input.x, 0);
+    assert.equal(account.training.input.y, 0);
+    assert.equal(game.estadoSala().anfitrionId, 'guest');
+    assert.equal(game.estadoSala().reingresos.length, 0);
+    const resumed = replies.find(m => m.type === 'inicioPartida').data;
+    assert.equal(resumed.preparacionTactica.phase, phase);
+    assert.deepEqual(Object.keys(resumed.preparacionTactica.players), ['host']);
+    assert.equal(resumed.preparacionRestante, phase === 'cuenta' ? 4 : 0);
+    game.processClientMessage('host', { type: 'abandonarPartida' }, { emit() {} });
+    game.processClientMessage('guest', { type: 'abandonarPartida' }, { emit() {} });
+    assert.equal(game.estadoSala().activa, false);
+    assert.equal(game.estadoSala().anfitrionId, null);
+    assert.equal(game.tactical(), null);
+    assert.equal(game.estadoSala().reingresos.length, 0);
+    assert.ok(Object.values(game.jugadores).filter(p => !p.esBot).every(p => !p.unido));
+    game.unirseSala('host', 'Otra sala');
+    assert.equal(game.estadoSala().anfitrionId, 'host');
+  });
+}
+
+for (const [difficulty, speed, range, pause] of [['facil', 55, 200, 1100], ['normal', 80, 300, 650], ['dificil', 150, 650, 650]]) {
+  test(`Dificultad ${difficulty}: velocidad, alcance, puntería y cadencia autoritativos`, () => {
+    const { game, advance } = loadGame();
+    game.addPlayer('host');
+    game.unirseSala('host', 'Host', null, 'pulse', { cantidadBots: 0, dificultadBots: difficulty });
+    game.iniciarDesdeSala('host');
+    advance(4000);
+    game.obstaculos.length = 0;
+    require('../public/js/zones').zones.length = 0;
+    game.addPlayer('bot');
+    const bot = game.jugadores.bot;
+    Object.assign(bot, { x: 1000, y: 1000, esBot: true, unido: true });
+    game.equipoInicial(bot);
+    Object.assign(game.jugadores.host, { x: 1000 + range + 1, y: 1000 });
+    game.actualizarBots();
+    assert.ok(Math.abs(bot.x - 1000 - speed / 30) < 0.0001);
+    assert.equal(game.balas.length, 0);
+    bot.x = 1000;
+    game.jugadores.host.x = 1000 + range - 1;
+    game.actualizarBots();
+    assert.equal(game.balas.length, 1);
+    assert.ok(Math.abs(game.balas[0].angle) <= (difficulty === 'facil' ? 0.3 : 0));
+    advance(pause - 1);
+    game.actualizarBots();
+    assert.equal(game.balas.length, 1);
+    advance(1);
+    game.actualizarBots();
+    assert.equal(game.balas.length, 2);
+    assert.equal(game.estadoSala().reglas.dificultadBots, difficulty);
+  });
+}
+
+for (const invalid of [undefined, 'imposible', '__proto__', 'constructor', { toString: null }]) {
+  test(`Dificultad inválida ${JSON.stringify(invalid)} usa Normal`, () => {
+    const { game } = loadGame();
+    game.addPlayer('host');
+    game.unirseSala('host', 'Host', null, 'pulse', { dificultadBots: invalid });
+    assert.equal(game.estadoSala().reglas.dificultadBots, 'normal');
+  });
+}
 
 test('Hielo limita humanos y bots y recupera la velocidad fuera', () => {
   const { game, advance } = loadGame();

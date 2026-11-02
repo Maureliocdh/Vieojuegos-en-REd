@@ -9,8 +9,9 @@
   const roofOpacity = new Map();
   window.WorldArt = {
     images,
-    specialZones(context) {
+    specialZones(context, inView) {
       for (const zone of SpecialZones.zones) {
+        if (inView && !inView(zone.x, zone.y, zone.radio)) continue;
         const ice = zone.tipo === 'hielo';
         context.save();
         context.beginPath();

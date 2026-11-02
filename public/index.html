@@ -64,6 +64,7 @@
               <label for="match-kills">Bajas para ganar<select id="match-kills"><option value="5">5 bajas</option><option value="10" selected>10 bajas</option><option value="20">20 bajas</option><option value="30">30 bajas</option></select></label>
               <label for="match-duration">Tiempo máximo<select id="match-duration"><option value="60">1 minuto</option><option value="120" selected>2 minutos</option><option value="180">3 minutos</option><option value="300">5 minutos</option></select></label>
               <label for="match-bots">Cantidad de bots<select id="match-bots"><option value="0">Sin bots</option><option value="5">5 bots</option><option value="11" selected>11 bots</option><option value="15">15 bots</option><option value="20">20 bots</option></select></label>
+              <label for="match-difficulty">Dificultad de bots<select id="match-difficulty"><option value="facil">Fácil</option><option value="normal" selected>Normal</option><option value="dificil">Difícil</option></select></label>
             </div>
             <label for="nickname">Nombre de jugador</label><input id="nickname" type="text" maxlength="16" autocomplete="nickname" placeholder="Tu nombre" />
             <div class="start-actions">
@@ -138,6 +139,7 @@
     <button id="grenade-button" type="button">💣</button>
 
     <button id="game-settings" class="icon-button settings-trigger" type="button" title="Ajustes de sonido" aria-label="Ajustes de sonido" hidden><i data-lucide="settings-2"></i></button>
+    <button id="leave-match" class="icon-button" type="button" title="Abandonar partida y volver al menú" aria-label="Abandonar partida y volver al menú" hidden><i data-lucide="log-out"></i></button>
     <dialog id="sound-dialog" aria-labelledby="sound-title"><form method="dialog"><div class="section-heading"><h2 id="sound-title">Sonido</h2><button class="icon-button" title="Cerrar" aria-label="Cerrar"><i data-lucide="x"></i></button></div><label for="volume-master">Volumen general <output id="value-master"></output></label><input id="volume-master" type="range" min="0" max="100" /><label for="volume-effects">Efectos <output id="value-effects"></output></label><input id="volume-effects" type="range" min="0" max="100" /><label for="volume-ambient">Ambiente <output id="value-ambient"></output></label><input id="volume-ambient" type="range" min="0" max="100" /><label class="mute-row" for="mute-audio"><span>Silenciar todo</span><input id="mute-audio" type="checkbox" /></label></form></dialog>
     <script src="/vendor/lucide.js"></script>
     <script src="/js/assets.js"></script>

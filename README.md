@@ -28,6 +28,7 @@ Comparte una partida con otros navegadores y dispositivos. El servidor mantiene 
 | Suministros | Botiquines, pociones de escudo y cajas de munición por tipo de arma. |
 | Tormenta | Zona segura que se reduce durante la partida y daña a quienes quedan fuera. |
 | Sonido | Volumen general, efectos, ambiente y silencio; ajustes guardados en el navegador. |
+| Música del menú | Ambientación espacial original sintetizada, con acordes suaves y graves sostenidos. Se controla con el volumen de ambiente. |
 | Móvil | Joystick de movimiento, joystick de apuntado y disparo, e inventario táctil. |
 
 ## Arranque Rápido
@@ -133,6 +134,7 @@ La tienda ofrece escopeta (80), rifle (100), sniper (140), escudo inicial +50 (4
 1. Elige un operador y escribe tu nombre.
 2. Selecciona las **bajas para ganar**: 5, 10, 20 o 30.
 3. Selecciona el **tiempo máximo**: 1, 2, 3 o 5 minutos.
+   Elige también la cantidad y la **dificultad de los bots**: Fácil (más lentos, disparan de cerca, con pausas y menor puntería), Normal (comportamiento habitual) o Difícil (más rápidos y atacan desde más lejos). La dificultad se guarda en el navegador; en multijugador manda la selección del anfitrión.
 4. Ajusta el sonido desde el botón de configuración.
 5. Pulsa **Crear sala**. El primer participante será el anfitrión y fijará las reglas.
 6. Los demás abren la misma dirección, personalizan su personaje, escriben su nombre y pulsan **Unirse a la sala**.
@@ -141,6 +143,8 @@ La tienda ofrece escopeta (80), rifle (100), sniper (140), escudo inicial +50 (4
 La sala se cierra al comenzar la ronda: no se admiten participantes nuevos durante la partida. El combate empieza tras una preparación de cuatro segundos; durante ella, jugadores, bots y temporizadores permanecen detenidos. Si el anfitrión se desconecta o recarga, el rol pasa a otro participante. Antes de comenzar, el anfitrión puede deshacer la sala y devolver a todos a la pantalla principal.
 
 La arena incluye once bots por defecto. Tras una eliminación, reapareces a los tres segundos. Al finalizar se muestra la clasificación completa y se destacan los tres primeros puestos. Cada jugador conserva sus resultados hasta pulsar **Volver al inicio**, desde donde puede crear una nueva sala o unirse a otra.
+
+El botón de **abandonar partida** (icono de salida, junto al sonido) te devuelve al menú en cualquier modalidad, incluida la sala de espera, las balizas, la tienda y la cuenta inicial. Solo sale quien lo pulsa: si quedan jugadores humanos, la ronda continúa sin reiniciarse y el anfitrión se releva cuando corresponde. Desde el menú puedes pulsar **Volver a la partida** para regresar a esa misma ronda, conservando personaje, posición, salud, equipo, bajas y progreso de preparación. La fase y el reloj siguen avanzando mientras estás fuera. Este permiso pertenece a la conexión que participó, no al nombre: funciona con Socket.IO y WebSocket nativo mientras no recargues ni cierres la página, y no permite entrar a jugadores nuevos. Si sale el último humano, la ronda se cancela, se borra el permiso de regreso y queda disponible una nueva sala.
 
 ## Controles
 
@@ -299,6 +303,17 @@ Vieojuegos-en-REd/
 | No se cierra una puerta | Una entidad está ocupando el hueco; aléjate para no quedar atrapado. |
 | El juego muestra una versión anterior | Reinicia el servidor tras cambiar código de servidor y recarga la página con `Ctrl+F5`. |
 | Falla Playwright | Instala Chromium y comprueba que 3410 y 3411 estén libres. |
+
+La música del menú empieza tras el primer clic, toque o pulsación de tecla, por las restricciones de reproducción automática del navegador. Se detiene al entrar en una sala, jugar, ver resultados u ocultar la pestaña, y vuelve al regresar al menú. Respeta **Volumen general**, **Ambiente** y **Silenciar todo**; no descarga música externa ni reproduce melodías de Halo.
+
+### Chrome va lento pero Firefox no
+
+Puede deberse a diferencias de Canvas 2D, aceleración gráfica, controladores, extensiones o ahorro de energía; no basta con comparar navegadores para confirmar la causa. El render evita dibujar entidades fuera de cámara y el marcador solo reconstruye sus filas cuando cambian, sin alterar la simulación ni los transportes.
+
+1. Actualiza Chrome y prueba sin extensiones, con el mismo número de bots y el mismo zoom.
+2. Revisa **Configuración → Sistema → Usar aceleración de gráficos cuando esté disponible**, reinicia Chrome y compara. En `chrome://gpu` puedes comprobar si Canvas está acelerado o usa software; no fuerces opciones experimentales.
+3. Desactiva temporalmente el ahorro de energía y comprueba los controladores gráficos del sistema.
+4. Si persiste, graba unos segundos jugando en **DevTools → Performance**. Una captura permite distinguir coste de dibujo, JavaScript y pausas del navegador; las pruebas automatizadas no reproducen necesariamente tu GPU.
 
 ## Gestión de Assets
 

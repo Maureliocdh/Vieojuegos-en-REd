@@ -41,6 +41,78 @@ function connect(url, native) {
 }
 
 for (const native of [false, true]) {
+  test(`Abandonar y dificultad en todos los modos (${native ? 'nativo' : 'Socket.IO'})`, { timeout: 20000 }, async (context) => {
+    const port = 22000 + Math.floor(Math.random() * 15000);
+    const server = spawn(process.execPath, ['server.js', ...(native ? ['--nativo'] : [])], {
+      cwd: path.join(__dirname, '..'), env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    context.after(() => server.kill());
+    await new Promise((resolve, reject) => {
+      server.stdout.on('data', data => { if (String(data).includes('Servidor (')) resolve(); });
+      server.once('error', reject);
+      server.once('exit', code => reject(new Error(`Servidor terminó: ${code}`)));
+    });
+    const url = `http://localhost:${port}`;
+    const host = connect(url, native), guest = connect(url, native);
+    context.after(() => { host.close(); guest.close(); });
+    await Promise.all([host.wait('configMapa'), guest.wait('configMapa')]);
+    for (const mode of ['clasico', 'puzzles', 'solo']) {
+      host.messages.length = 0;
+      guest.messages.length = 0;
+      host.send('unirse', { nombre: 'Host', cantidadBots: 5, dificultadBots: 'dificil', modoArena: mode, soloJugador: mode === 'solo' });
+      const room = await host.wait('estadoSala', r => r.jugadores.length === 1);
+      assert.equal(room.reglas.dificultadBots, 'dificil');
+      if (mode !== 'solo') {
+        guest.send('unirse', { nombre: 'Guest', dificultadBots: 'facil' });
+        const joined = await guest.wait('estadoSala', r => r.jugadores.length === 2);
+        assert.equal(joined.reglas.dificultadBots, 'dificil');
+        await host.wait('estadoSala', r => r.jugadores.length === 2);
+      }
+      host.send('iniciarSala', {});
+      const start = await host.wait('inicioPartida');
+      assert.equal((await host.wait('configPartida', r => r.activa)).dificultadBots, 'dificil');
+      if (mode !== 'solo') {
+        await guest.wait('inicioPartida');
+        const snapshot = await host.wait('estadoJuego', s => s.jugadores[room.anfitrionId]?.unido);
+        guest.messages.length = 0;
+        host.send('abandonarPartida', {});
+        await host.wait('salidaPartida');
+        const continued = await guest.wait('estadoSala', r => r.activa && r.jugadores.length === 1);
+        assert.notEqual(continued.anfitrionId, room.anfitrionId);
+        const after = await guest.wait('estadoJuego', s => !s.jugadores[room.anfitrionId]?.unido);
+        assert.equal(after.tiempoRestante, snapshot.tiempoRestante);
+        assert.equal(guest.messages.some(m => ['finDeJuego', 'reinicioPartida'].includes(m.type)), false);
+        const outsider = connect(url, native);
+        context.after(() => outsider.close());
+        await outsider.wait('configMapa');
+        outsider.send('unirse', { nombre: 'Host', id: room.anfitrionId });
+        assert.equal((await outsider.wait('entradaRechazada')).motivo, 'partidaEnCurso');
+        host.messages.length = 0;
+        host.send('unirse', { nombre: 'Regreso', cantidadBots: 20, dificultadBots: 'facil' });
+        const resumed = await host.wait('inicioPartida');
+        assert.ok(resumed.tiempoRestante > 0 && resumed.tiempoRestante <= start.tiempoRestante);
+        assert.ok(resumed.preparacionRestante >= 0 && resumed.preparacionRestante <= start.preparacionRestante);
+        if (mode === 'puzzles') {
+          assert.deepEqual(Object.keys(resumed.preparacionTactica.players), [room.anfitrionId]);
+        }
+        const returned = await host.wait('estadoSala', r => r.activa && r.jugadores.length === 2);
+        assert.equal(returned.anfitrionId, continued.anfitrionId);
+        assert.equal(returned.jugadores.find(p => p.id === room.anfitrionId).nombre, 'Host');
+        assert.equal(returned.reglas.cantidadBots, 5);
+        assert.equal(returned.reglas.dificultadBots, 'dificil');
+        host.send('abandonarPartida', {});
+        await host.wait('salidaPartida');
+        guest.send('abandonarPartida', {});
+        await guest.wait('salidaPartida');
+      } else {
+        host.send('abandonarPartida', {});
+        await host.wait('salidaPartida');
+      }
+      const empty = await host.wait('estadoSala', r => !r.activa && r.anfitrionId === null);
+      assert.deepEqual(empty.reingresos, []);
+    }
+  });
+
   test(`Sala: espera, permisos, bloqueo tardío y relevo de anfitrión (${native ? 'nativo' : 'Socket.IO'})`, { timeout: 15000 }, async (context) => {
     const port = 22000 + Math.floor(Math.random() * 15000);
     const server = spawn(process.execPath, ['server.js', ...(native ? ['--nativo'] : [])], {
@@ -96,4 +168,3 @@ for (const native of [false, true]) {
     assert.equal(late.messages.some(m => m.type === 'inicioPartida'), false);
   });
 }
-

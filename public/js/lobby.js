@@ -8,6 +8,7 @@
     limiteKills: [5, 10, 20, 30].includes(saved.limiteKills) ? saved.limiteKills : 10,
     duracion: [60, 120, 180, 300].includes(saved.duracion) ? saved.duracion : 120,
     cantidadBots: [0, 5, 11, 15, 20].includes(saved.cantidadBots) ? saved.cantidadBots : 11,
+    dificultadBots: ['facil', 'normal', 'dificil'].includes(saved.dificultadBots) ? saved.dificultadBots : 'normal',
     master: volume(saved.master, 0.65), effects: volume(saved.effects, 0.7), ambient: volume(saved.ambient, 0.25), muted: saved.muted === true,
     save() { try { localStorage.setItem('outpost-settings', JSON.stringify(this)); } catch {} },
   };
@@ -71,6 +72,9 @@
     select.value = ui[field];
     select.addEventListener('change', () => { ui[field] = Number(select.value); ui.save(); });
   }
+  const difficulty = document.getElementById('match-difficulty');
+  difficulty.value = ui.dificultadBots;
+  difficulty.addEventListener('change', () => { ui.dificultadBots = difficulty.value; ui.save(); });
   document.getElementById('nickname').value = ui.name;
   document.getElementById('nickname').addEventListener('input', (event) => { ui.name = event.target.value; ui.save(); });
   for (const channel of ['master', 'effects', 'ambient']) {

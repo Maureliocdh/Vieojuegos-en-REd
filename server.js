@@ -103,9 +103,13 @@ const HIT_RADIUS = 40;
 const RESPAWN_MARGIN = 80;
 const PLATFORM_RADIUS = 55;
 const LOOT = ['pistola', 'escopeta', 'botiquin', 'escudo_pocion', 'rifle', 'sniper', 'granada'];
-// Dificultad moderada: persiguen más despacio y solo atacan a distancia cercana.
-const BOT_SPEED = 80;
-const BOT_ATTACK_RANGE = 300;
+const BOT_DIFFICULTIES = {
+  facil: { velocidad: 55, alcance: 200, errorPunteria: 0.3, intervaloDisparo: 1100 },
+  normal: { velocidad: 80, alcance: 300, errorPunteria: 0, intervaloDisparo: 0 },
+  dificil: { velocidad: 150, alcance: 650, errorPunteria: 0, intervaloDisparo: 0 },
+};
+const validarDificultad = value => typeof value === 'string' && Object.hasOwn(BOT_DIFFICULTIES, value) ? value : 'normal';
+let dificultadBots = 'normal';
 let cantidadBots = 11;
 const RESPAWN_COOLDOWN = 3000;
 let partidaEnCurso = false;
@@ -232,6 +236,7 @@ let opcionesSala = {};
 let finPreparacion = 0;
 let preparacionTactica = null;
 let botsCompraron = false;
+const jugadoresAusentes = new Map();
 function segundosPreparacion() {
   if (preparacionTactica && preparacionTactica.phase(Date.now()).phase !== 'cuenta') return 0;
   return Math.max(0, Math.ceil((finPreparacion - Date.now()) / 1000));
@@ -266,7 +271,7 @@ function actualizarPreparacionTactica() {
 }
 
 function estadoSala() {
-  return { anfitrionId, activa: partidaEnCurso, finalizada: partidaFinalizada,
+  return { anfitrionId, activa: partidaEnCurso, finalizada: partidaFinalizada, reingresos: [...jugadoresAusentes.keys()],
     reglas: opcionesSala, jugadores: Object.entries(jugadores)
       .filter(([, j]) => j.unido && !j.esBot)
       .map(([id, j]) => ({ id, nombre: j.nombre, skin: j.skin })) };
@@ -293,7 +298,7 @@ function iniciarDesdeSala(id) {
 }
 
 function reglasPartida() {
-  return { limiteKills, duracion: duracionPartida, cantidadBots, soloJugador: modoSoloJugador, modoArena: opcionesSala.modoArena || 'clasico', activa: partidaEnCurso, finalizada: partidaFinalizada };
+  return { limiteKills, duracion: duracionPartida, cantidadBots, dificultadBots, soloJugador: modoSoloJugador, modoArena: opcionesSala.modoArena || 'clasico', activa: partidaEnCurso, finalizada: partidaFinalizada };
 }
 
 function iniciarPartida(opciones = {}) {
@@ -303,6 +308,7 @@ function iniciarPartida(opciones = {}) {
   limiteKills = [5, 10, 20, 30].includes(opciones.limiteKills) ? opciones.limiteKills : 10;
   duracionPartida = [60, 120, 180, 300].includes(opciones.duracion) ? opciones.duracion : 120;
   modoSoloJugador = opciones.soloJugador === true;
+  dificultadBots = validarDificultad(opciones.dificultadBots);
   const nuevosBots = [0, 5, 11, 15, 20].includes(opciones.cantidadBots) ? opciones.cantidadBots : 11;
   if (nuevosBots !== cantidadBots) {
     for (const [id, jugador] of Object.entries(jugadores)) {
@@ -352,6 +358,7 @@ function finalizarPartida() {
 }
 
 function reiniciarMundo() {
+    jugadoresAusentes.clear();
     for (const jugador of Object.values(jugadores)) {
       jugador.vida = 100;
       jugador.escudo = 0;
@@ -399,6 +406,24 @@ function cerrarSala(id) {
 function unirseJugador(id, nombre, client = null, skin = 'pulse', opciones = {}) {
   const jugador = jugadores[id];
   if (!jugador || jugador.esBot || jugador.unido || partidaFinalizada) return;
+  const anterior = jugadoresAusentes.get(id);
+  if (partidaEnCurso && anterior && client) {
+    jugadores[id] = anterior.jugador;
+    jugadoresAusentes.delete(id);
+    if (preparacionTactica && anterior.cuenta) {
+      anterior.cuenta.training.input = { x: 0, y: 0 };
+      anterior.cuenta.training.inputAt = -Infinity;
+      anterior.cuenta.training.lastTick = Date.now();
+      preparacionTactica.accounts.set(id, anterior.cuenta);
+    }
+    publicarSala();
+    sendToClient(client, 'configPartida', reglasPartida());
+    sendToClient(client, 'inicioPartida', {
+      tiempoRestante, preparacionRestante: segundosPreparacion(),
+      preparacionTactica: preparacionTactica?.snapshot(Date.now(), id) ?? null,
+    });
+    return;
+  }
   if (partidaEnCurso || (anfitrionId && opcionesSala.soloJugador)) {
     if (client) sendToClient(client, 'entradaRechazada', { motivo: partidaEnCurso ? 'partidaEnCurso' : 'soloJugador' });
     return;
@@ -413,6 +438,7 @@ function unirseJugador(id, nombre, client = null, skin = 'pulse', opciones = {})
       limiteKills: [5,10,20,30].includes(opciones.limiteKills) ? opciones.limiteKills : 10,
       duracion: [60,120,180,300].includes(opciones.duracion) ? opciones.duracion : 120,
       cantidadBots: [0,5,11,15,20].includes(opciones.cantidadBots) ? opciones.cantidadBots : 11,
+      dificultadBots: validarDificultad(opciones.dificultadBots),
       soloJugador: opciones.soloJugador === true,
       modoArena: opciones.soloJugador !== true && opciones.modoArena === 'puzzles' ? 'puzzles' : 'clasico',
     };
@@ -577,7 +603,16 @@ function generarBot(id) {
   equiparArma(jugadores[id]);
 }
 
-function removePlayer(id) {
+function removePlayer(id, conservar = false) {
+  if (conservar && partidaEnCurso && jugadores[id]?.unido) {
+    const jugador = jugadores[id];
+    jugador.recargando = false;
+    jugador.recargaId = (jugador.recargaId || 0) + 1;
+    jugadoresAusentes.set(id, { jugador, cuenta: preparacionTactica?.accounts.get(id) });
+  } else {
+    jugadoresAusentes.delete(id);
+  }
+  preparacionTactica?.accounts.delete(id);
   delete jugadores[id];
   if (partidaEnCurso && !Object.values(jugadores).some(j => j.unido && !j.esBot)) {
     partidaEnCurso = false;
@@ -592,6 +627,22 @@ function removePlayer(id) {
   publicarSala();
   broadcast('jugadorDesconectado', id);
   console.log(`Desconectado: ${id}`);
+}
+
+function abandonarPartida(id, client) {
+  if (!jugadores[id] || !client) return;
+  if (jugadores[id].unido) {
+    for (let index = balas.length - 1; index >= 0; index -= 1) {
+      if (balas[index].propietarioId === id) balas.splice(index, 1);
+    }
+    for (let index = granadas.length - 1; index >= 0; index -= 1) {
+      if (granadas[index].lanzadorId === id) granadas.splice(index, 1);
+    }
+    removePlayer(id, true);
+    // Conserva el transporte y la identidad para poder crear o unirse a otra sala.
+    addPlayer(id);
+  }
+  sendToClient(client, 'salidaPartida', {});
 }
 
 const tiemposMovimiento = new WeakMap();
@@ -765,6 +816,10 @@ function dropItem(id, { slot } = {}) {
 
 function processClientMessage(id, message, client = null) {
   if (!message || typeof message !== 'object') return;
+  if (message.type === 'abandonarPartida') {
+    abandonarPartida(id, client);
+    return;
+  }
   if (partidaEnCurso && jugadores[id]?.unido && preparacionTactica) {
     if (message.type === 'moverEntrenamiento') preparacionTactica.move(id, message.data, Date.now());
     if (message.type === 'comprarEquipo') preparacionTactica.buy(id, message.data?.item, Date.now(), item => concederCompra(id, item));
@@ -823,7 +878,7 @@ if (nativeMode) {
     sendToClient(socket, 'configPartida', reglasPartida());
     sendToClient(socket, 'estadoSala', estadoSala());
 
-    for (const type of ['moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada']) {
+    for (const type of ['abandonarPartida', 'moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada']) {
       socket.on(type, (data) => processClientMessage(id, { type, data }, socket));
     }
     socket.on('disconnect', () => removePlayer(id));
@@ -898,6 +953,7 @@ function procesarRespawns() {
 /** Ejecuta la IA de un bot una vez por tick del servidor. */
 function actualizarBots() {
   if (!partidaEnCurso) return;
+  const dificultad = BOT_DIFFICULTIES[dificultadBots];
   for (const [botId, bot] of Object.entries(jugadores)) {
     if (!bot.esBot || bot.muerto || bot.vida <= 0) continue;
 
@@ -950,20 +1006,22 @@ function actualizarBots() {
     if (distanciaObjetivo > 55) {
       moverEntidad(
         bot,
-        bot.x + Math.cos(bot.angle) * (BOT_SPEED / TICK_RATE) * SpecialZones.effects(bot).speedMultiplier,
-        bot.y + Math.sin(bot.angle) * (BOT_SPEED / TICK_RATE) * SpecialZones.effects(bot).speedMultiplier,
+        bot.x + Math.cos(bot.angle) * (dificultad.velocidad / TICK_RATE) * SpecialZones.effects(bot).speedMultiplier,
+        bot.y + Math.sin(bot.angle) * (dificultad.velocidad / TICK_RATE) * SpecialZones.effects(bot).speedMultiplier,
       );
     }
 
     // Reutiliza la misma lógica de disparo, cooldown y dispersión que un humano.
     const cuerpoACuerpo = armaActual(bot) === 'puños';
-    if (distanciaObjetivo < (cuerpoACuerpo ? 100 : BOT_ATTACK_RANGE)) {
+    if (distanciaObjetivo < (cuerpoACuerpo ? 100 : dificultad.alcance)) {
       if (!cuerpoACuerpo && bot.balasEnCargador <= 0) {
         iniciarRecarga(botId);
         continue;
       }
       if (bot.recargando) continue;
-      createBullet(botId, { x: bot.x, y: bot.y, angle: bot.angle });
+      if (Date.now() - bot.ultimoDisparo < dificultad.intervaloDisparo) continue;
+      const error = cuerpoACuerpo ? 0 : (Math.random() * 2 - 1) * dificultad.errorPunteria;
+      createBullet(botId, { x: bot.x, y: bot.y, angle: bot.angle + error });
     }
   }
 }

@@ -71,6 +71,60 @@ let audioCtx = null;
 let masterGain = null;
 let effectsGain = null;
 let ambientGain = null;
+let menuMusicGain = null;
+let menuMusicTimer = null;
+let menuNextChord = 0;
+let menuChordIndex = 0;
+const menuNotes = new Set();
+const menuChords = [[45, 52, 59, 64], [48, 55, 62, 67], [41, 48, 55, 60], [43, 50, 57, 62]];
+function stopMenuMusic() {
+  if (menuMusicTimer !== null) clearInterval(menuMusicTimer);
+  menuMusicTimer = null;
+  for (const oscillator of menuNotes) oscillator.stop();
+  menuNotes.clear();
+}
+function scheduleMenuMusic() {
+  while (menuNextChord < audioCtx.currentTime + 8) {
+    const chord = menuChords[menuChordIndex % menuChords.length];
+    for (const [index, note] of chord.entries()) {
+      for (const detune of [-5, 5]) {
+        const oscillator = audioCtx.createOscillator();
+        const envelope = audioCtx.createGain();
+        const filter = audioCtx.createBiquadFilter();
+        const start = menuNextChord + index * 0.12;
+        oscillator.type = index === 0 ? 'sine' : 'triangle';
+        oscillator.frequency.value = 440 * 2 ** ((note - 69) / 12);
+        oscillator.detune.value = detune;
+        filter.type = 'lowpass';
+        filter.frequency.value = 850;
+        filter.Q.value = 0.5;
+        oscillator.connect(filter); filter.connect(envelope); envelope.connect(menuMusicGain);
+        envelope.gain.setValueAtTime(0, start);
+        envelope.gain.linearRampToValueAtTime(index === 0 ? 0.1 : 0.045, start + 1.8);
+        envelope.gain.setValueAtTime(index === 0 ? 0.1 : 0.045, start + 4);
+        envelope.gain.linearRampToValueAtTime(0, start + 7);
+        oscillator.onended = () => {
+          oscillator.disconnect(); filter.disconnect(); envelope.disconnect(); menuNotes.delete(oscillator);
+        };
+        menuNotes.add(oscillator);
+        oscillator.start(start); oscillator.stop(start + 7);
+      }
+    }
+    menuNextChord += 6;
+    menuChordIndex += 1;
+  }
+}
+function updateMenuMusic() {
+  const audible = audioCtx.state === 'running' && !document.hidden && !ArenaUI.muted
+    && ArenaUI.master > 0 && ArenaUI.ambient > 0 && !gameStarted && !gameFinished
+    && inicioScreen.style.display !== 'none' && waitingScreen.hidden;
+  if (!audible) { stopMenuMusic(); return; }
+  if (menuMusicTimer !== null) return;
+  menuNextChord = audioCtx.currentTime + 0.05;
+  menuChordIndex = 0;
+  scheduleMenuMusic();
+  menuMusicTimer = setInterval(scheduleMenuMusic, 1000);
+}
 const resultNotes = new Set();
 function stopResultMusic() {
   for (const oscillator of resultNotes) oscillator.stop();
@@ -106,6 +160,8 @@ function updateAudioLevels() {
   masterGain.gain.value = ArenaUI.muted || document.hidden ? 0 : ArenaUI.master;
   effectsGain.gain.value = ArenaUI.effects;
   ambientGain.gain.value = gameStarted ? ArenaUI.ambient * 0.025 : 0;
+  menuMusicGain.gain.value = ArenaUI.ambient;
+  updateMenuMusic();
 }
 window.addEventListener('audio-settings', updateAudioLevels);
 document.addEventListener('visibilitychange', updateAudioLevels);
@@ -115,8 +171,10 @@ function getAudioCtx() {
     masterGain = audioCtx.createGain();
     effectsGain = audioCtx.createGain();
     ambientGain = audioCtx.createGain();
+    menuMusicGain = audioCtx.createGain();
     effectsGain.connect(masterGain);
     ambientGain.connect(masterGain);
+    menuMusicGain.connect(masterGain);
     masterGain.connect(audioCtx.destination);
     const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 3, audioCtx.sampleRate);
     const samples = buffer.getChannelData(0);
@@ -128,9 +186,17 @@ function getAudioCtx() {
     breeze.connect(filter); filter.connect(ambientGain); breeze.start();
     updateAudioLevels();
   }
-  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().then(updateAudioLevels).catch(error => console.warn('No se pudo activar el audio:', error));
+  }
   return audioCtx;
 }
+function unlockMenuAudio() {
+  if (audioCtx && audioCtx.state !== 'suspended') return;
+  try { getAudioCtx(); } catch (error) { console.warn('No se pudo iniciar el audio del menú:', error); }
+}
+document.addEventListener('pointerdown', unlockMenuAudio);
+document.addEventListener('keydown', unlockMenuAudio);
 function playTone(frecuencia, tipo, duracion, volumen = 0.18) {
   try {
     const ctx2 = getAudioCtx();
@@ -158,12 +224,17 @@ function vibrar(ms = 60) {
 }
 
 /** Ordena el estado recibido y actualiza el marcador visible en pantalla. */
+let scoreboardSignature = '';
 function actualizarScoreboard(jugadoresRecibidos) {
   const ranking = Object.entries(jugadoresRecibidos)
     .filter(([, jugador]) => jugador.unido)
-    .sort(([, jugadorA], [, jugadorB]) => (jugadorB.kills || 0) - (jugadorA.kills || 0));
+    .sort(([, jugadorA], [, jugadorB]) => (jugadorB.kills || 0) - (jugadorA.kills || 0))
+    .slice(0, isMobile ? 3 : 8);
+  const signature = JSON.stringify(ranking.map(([id, jugador]) => [id, jugador.nombre, jugador.kills || 0]));
+  if (signature === scoreboardSignature) return;
+  scoreboardSignature = signature;
 
-  scoreboard.replaceChildren(...ranking.slice(0, isMobile ? 3 : 8).map(([, jugador], index) => {
+  scoreboard.replaceChildren(...ranking.map(([, jugador], index) => {
     const row = document.createElement('div');
     row.textContent = `${jugador.nombre || `Jugador ${index + 1}`}: ${jugador.kills || 0}`;
     return row;
@@ -227,13 +298,20 @@ network.on('estadoSala', (room) => {
   for (const tab of document.querySelectorAll('[data-mode]')) tab.disabled = !!room.anfitrionId || room.activa;
   if (room.anfitrionId) window.selectArenaMode(room.reglas.soloJugador ? 'solo' : room.reglas.modoArena || 'clasico', false);
   const member = room.jugadores.some(j => j.id === network.id);
+  document.getElementById('leave-match').hidden = !member;
   if (room.activa || room.finalizada) {
     waitingScreen.hidden = true;
     if (!member) {
-      playButton.disabled = true;
+      const puedeVolver = room.activa && room.reingresos?.includes(network.id);
+      playButton.disabled = !networkReady || !puedeVolver;
+      soloModeLocked = !puedeVolver;
       singlePlayerButton.disabled = true;
-      document.getElementById('connection-status').textContent = 'Partida en curso. Espera a la siguiente ronda.';
+      playButton.querySelector('span').textContent = puedeVolver ? 'Volver a la partida' : 'Unirse a la sala';
+      document.getElementById('connection-status').textContent = puedeVolver
+        ? 'Tu partida sigue en curso. Puedes volver a unirte.'
+        : 'Partida en curso. Espera a la siguiente ronda.';
     }
+    updateAudioLevels();
     return;
   }
   soloModeLocked = !!room.reglas.soloJugador && !member;
@@ -246,12 +324,14 @@ network.on('estadoSala', (room) => {
   waitingScreen.hidden = !member;
   if (!member) {
     if (!gameStarted && !gameFinished) inicioScreen.style.display = 'flex';
+    updateAudioLevels();
     return;
   }
   joinRequestPending = false;
   inicioScreen.style.display = 'none';
   finishScreen.style.display = 'none';
   waitingScreen.hidden = false;
+  updateAudioLevels();
   const list = document.getElementById('room-players');
   list.replaceChildren();
   for (const j of room.jugadores) {
@@ -269,14 +349,21 @@ network.on('estadoSala', (room) => {
   document.getElementById('start-match').hidden = !host;
   document.getElementById('close-room').hidden = !host;
   document.getElementById('room-status').textContent = host ? 'Confirma que están todos y pulsa Iniciar partida.' : 'Esperando a que el anfitrión inicie la partida…';
-  document.getElementById('room-rules').textContent = (room.reglas.modoArena === 'puzzles' ? 'CON PUZZLES · ' : 'CLÁSICO · ') + room.jugadores.length + ' jugadores · ' + room.reglas.cantidadBots + ' bots · ' + room.reglas.limiteKills + ' bajas · ' + room.reglas.duracion / 60 + ' min';
+  const difficulty = { facil: 'Fácil', normal: 'Normal', dificil: 'Difícil' }[room.reglas.dificultadBots] || 'Normal';
+  document.getElementById('room-rules').textContent = (room.reglas.modoArena === 'puzzles' ? 'CON PUZZLES · ' : 'CLÁSICO · ') + room.jugadores.length + ' jugadores · ' + room.reglas.cantidadBots + ' bots (' + difficulty + ') · ' + room.reglas.limiteKills + ' bajas · ' + room.reglas.duracion / 60 + ' min';
 });
 function actualizarCuentaInicio() {
   const overlay = document.getElementById('match-countdown');
-  overlay.hidden = preparacionRestante <= 0 || resultsPinned;
+  overlay.hidden = !gameStarted || preparacionRestante <= 0 || resultsPinned;
   document.getElementById('countdown-number').textContent = preparacionRestante > 3 ? 'PREPÁRATE' : preparacionRestante;
 }
 document.getElementById('close-room').addEventListener('click', () => network.send('cerrarSala', {}));
+document.getElementById('leave-match').addEventListener('click', () => network.send('abandonarPartida', {}));
+network.on('salidaPartida', () => {
+  resultsPinned = false;
+  network.receive('reinicioPartida', {});
+  if (currentRoom) network.receive('estadoSala', currentRoom);
+});
 document.getElementById('return-home').addEventListener('click', () => {
   resultsPinned = false;
   network.receive('reinicioPartida', {});
@@ -289,7 +376,7 @@ document.getElementById('start-match').addEventListener('click', () => {
 
 network.on('configPartida', (rules) => {
   const locked = rules.activa || rules.finalizada;
-  for (const [id, field] of [['match-kills', 'limiteKills'], ['match-duration', 'duracion'], ['match-bots', 'cantidadBots']]) {
+  for (const [id, field] of [['match-kills', 'limiteKills'], ['match-duration', 'duracion'], ['match-bots', 'cantidadBots'], ['match-difficulty', 'dificultadBots']]) {
     const select = document.getElementById(id);
     select.disabled = locked;
     select.value = locked ? rules[field] : ArenaUI[field];
@@ -320,11 +407,12 @@ network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, obstaculos: obstaculosDelServ
 
 network.on('inicioPartida', ({ tiempoRestante, preparacionRestante: countdown = 0, preparacionTactica = null }) => {
   if (!currentRoom?.jugadores.some(j => j.id === network.id)) return;
+  joinRequestPending = false;
+  gameStarted = true;
   preparacionRestante = countdown;
   actualizarCuentaInicio();
   waitingScreen.hidden = true;
   stopResultMusic();
-  gameStarted = true;
   gameFinished = false;
   tiempoPartida = tiempoRestante ?? 120;
   inicioScreen.style.display = 'none';
@@ -378,6 +466,14 @@ network.on('reinicioPartida', () => {
   gameFinished = false;
   joinRequestPending = false;
   soloModeLocked = false;
+  preparacionRestante = 0;
+  actualizarCuentaInicio();
+  waitingScreen.hidden = true;
+  keys.clear();
+  fireHeld = false;
+  Object.assign(movement, { x: 0, y: 0 });
+  Object.assign(aim, { x: 0, y: 0 });
+  document.getElementById('sound-dialog').close();
   tiempoPartida = 120;
   setGameVisibility(false);
   finishScreen.style.display = 'none';
@@ -385,6 +481,7 @@ network.on('reinicioPartida', () => {
   nicknameInput.value = ArenaUI.name;
   playButton.disabled = !networkReady;
   singlePlayerButton.disabled = !networkReady;
+  updateAudioLevels();
 });
 
 network.on('entradaRechazada', ({ motivo } = {}) => {
@@ -520,7 +617,7 @@ async function connectNetwork() {
       for (const type of [
         'estadoSala', 'configMapa', 'estadoJuego', 'jugadorDesconectado', 'inicioPartida',
         'tiempoPartida', 'finDeJuego', 'reinicioPartida', 'kill', 'explosion', 'zonaActualizada',
-        'configPartida', 'entradaRechazada',
+        'configPartida', 'entradaRechazada', 'salidaPartida',
       ]) {
         socket.on(type, (data) => network.receive(type, data));
       }
@@ -574,6 +671,7 @@ function setConnectionState(ready) {
 
 function setGameVisibility(visible) {
   document.getElementById('game-settings').hidden = !visible;
+  document.getElementById('leave-match').hidden = !visible;
   const elements = [scoreboard, swapButton, reloadButton, respawnMessage,
     document.getElementById('drop-button'), document.getElementById('grenade-button'),
     document.getElementById('move-zone'), document.getElementById('aim-zone')];
@@ -593,6 +691,7 @@ function requestJoin(soloJugador) {
   network.send('unirse', { nombre, skin: ArenaUI.skin,
     limiteKills: Number(document.getElementById('match-kills').value),
     cantidadBots: Number(document.getElementById('match-bots').value),
+    dificultadBots: document.getElementById('match-difficulty').value,
     duracion: Number(document.getElementById('match-duration').value), soloJugador, modoArena: ArenaUI.modo === 'puzzles' ? 'puzzles' : 'clasico' });
 }
 
@@ -1466,6 +1565,11 @@ function draw() {
 
   const jugadorLocal = gameStarted ? (jugadores[network.id] || player) : { x: 1250, y: 1050 };
   const { sx: shakeX, sy: shakeY } = getShakeOffset();
+  // El margen conserva etiquetas, armas y sombras en los bordes de la cámara.
+  const inView = (x, y, radius = 0) => Math.abs(x - jugadorLocal.x) <= window.innerWidth / 2 + radius + 128
+    && Math.abs(y - jugadorLocal.y) <= window.innerHeight / 2 + radius + 128;
+  const visibleObstacles = obstaculos.filter(object => inView(object.x + object.width / 2,
+    object.y + object.height / 2, Math.max(object.width, object.height) / 2));
   ctx.save();
   ctx.translate(window.innerWidth / 2 - jugadorLocal.x + shakeX, window.innerHeight / 2 - jugadorLocal.y + shakeY);
 
@@ -1475,13 +1579,11 @@ function draw() {
   ctx.rect(0, 0, mapWidth, mapHeight);
   ctx.clip();
   WorldArt.terrain(ctx, floorImage, mapWidth, mapHeight);
-  WorldArt.specialZones(ctx);
+  WorldArt.specialZones(ctx, inView);
   ctx.restore();
 
   // Obstáculos estáticos: se dibujan antes de plataformas, balas y jugadores.
-  for (const obstaculo of obstaculos) {
-    if (Math.abs(obstaculo.x - jugadorLocal.x) > window.innerWidth / 2 + obstaculo.width
-      || Math.abs(obstaculo.y - jugadorLocal.y) > window.innerHeight / 2 + obstaculo.height) continue;
+  for (const obstaculo of visibleObstacles) {
     WorldArt.obstacle(ctx, obstaculo);
   }
 
@@ -1492,6 +1594,7 @@ function draw() {
 
   // Las plataformas se dibujan antes que los jugadores, por lo que quedan debajo de ellos.
   for (const plataforma of plataformas) {
+    if (!inView(plataforma.x, plataforma.y)) continue;
     if (platformImage.complete && platformImage.naturalWidth) {
       ctx.drawImage(
         platformImage,
@@ -1508,6 +1611,7 @@ function draw() {
 
   // Items tirados en el suelo: pequeño icono con brillo parpadeante.
   for (const drop of itemsEnSuelo) {
+    if (!inView(drop.x, drop.y)) continue;
     const pulso = 0.7 + 0.3 * Math.sin(performance.now() / 300);
     ctx.save();
     ctx.globalAlpha = pulso;
@@ -1531,6 +1635,7 @@ function draw() {
   }
 
   for (const cofre of cofres) {
+    if (!inView(cofre.x, cofre.y)) continue;
     ctx.fillStyle = cofre.abierto ? '#506960' : '#815636';
     ctx.strokeStyle = '#e6c55d'; ctx.lineWidth = 3;
     ctx.fillRect(cofre.x - 25, cofre.y - 18, 50, 36);
@@ -1540,11 +1645,12 @@ function draw() {
     ctx.fillStyle = '#e6c55d'; ctx.fillRect(cofre.x - 4, cofre.y - 5, 8, 12);
   }
 
-  for (const bush of obstaculos.filter((object) => object.tipo === 'arbusto')) WorldArt.bush(ctx, bush, jugadores[network.id]);
+  for (const bush of visibleObstacles.filter((object) => object.tipo === 'arbusto')) WorldArt.bush(ctx, bush, jugadores[network.id]);
 
   // Todas las balas provienen del estado enviado por el servidor.
   // Balas: usa imagen si cargó, si no dibuja un círculo simple
   for (const bala of balas) {
+    if (!inView(bala.x, bala.y)) continue;
     ctx.save();
     ctx.translate(bala.x, bala.y);
     ctx.rotate(bala.angle);
@@ -1566,6 +1672,7 @@ function draw() {
   for (const id in jugadores) {
     const jugador = jugadores[id];
     if (jugador.muerto || !jugador.unido) continue;
+    if (!inView(jugador.x, jugador.y)) continue;
     if (Buildings.concealed(obstaculos, jugador, jugadores[network.id])) continue;
 
     ctx.save();
@@ -1666,6 +1773,7 @@ function draw() {
 
   // Granadas en vuelo (en coordenadas mundo = dentro del save de cámara)
   for (const g of granadosEnVuelo) {
+    if (!inView(g.x, g.y)) continue;
     ctx.save();
     ctx.translate(g.x, g.y);
     ctx.rotate(g.angle);
@@ -1688,7 +1796,7 @@ function draw() {
     ctx.restore();
   }
 
-  for (const building of obstaculos.filter(Buildings.isBuilding)) WorldArt.roof(ctx, building, jugadorLocal);
+  for (const building of visibleObstacles.filter(Buildings.isBuilding)) WorldArt.roof(ctx, building, jugadorLocal);
   if (nearbyDoor || nearbyChest) {
     ctx.save();
     ctx.font = 'bold 15px sans-serif';
