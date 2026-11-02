@@ -23,11 +23,11 @@ function connect(url, native) {
     messages,
     close: () => native ? socket.close() : socket.disconnect(),
     send: (type, data) => native ? socket.send(JSON.stringify({ type, data })) : socket.emit(type, data),
-    wait(type, predicate = () => true) {
+    wait(type, predicate = () => true, timeout = 5000) {
       const found = messages.find((message) => message.type === type && predicate(message.data));
       if (found) return Promise.resolve(found.data);
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { listeners.delete(listener); reject(new Error(`Timeout: ${type}`)); }, 5000);
+        const timer = setTimeout(() => { listeners.delete(listener); reject(new Error(`Timeout: ${type}`)); }, timeout);
         function listener(receivedType, data) {
           if (receivedType !== type || !predicate(data)) return;
           clearTimeout(timer);
@@ -41,6 +41,62 @@ function connect(url, native) {
 }
 
 for (const native of [false, true]) {
+  test(`Mapa y encuesta completos por red (${native ? 'nativo' : 'Socket.IO'})`, { timeout: 95000 }, async context => {
+    const port = 22000 + Math.floor(Math.random() * 15000);
+    const server = spawn(process.execPath, ['server.js', ...(native ? ['--nativo'] : [])], {
+      cwd: path.join(__dirname, '..'), env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    context.after(() => server.kill());
+    await new Promise((resolve, reject) => {
+      server.stdout.on('data', data => { if (String(data).includes('Servidor (')) resolve(); });
+      server.once('error', reject);
+      server.once('exit', code => reject(new Error(`Servidor terminó: ${code}`)));
+    });
+    const url = `http://localhost:${port}`;
+    const host = connect(url, native), guest = connect(url, native), spectator = connect(url, native);
+    context.after(() => { host.close(); guest.close(); spectator.close(); });
+    await Promise.all([host.wait('configMapa'), guest.wait('configMapa'), spectator.wait('configMapa')]);
+    host.send('unirse', { nombre: 'Host', mapa: 'orbital', duracion: 60, cantidadBots: 0 });
+    const room = await host.wait('estadoSala', state => state.jugadores.length === 1);
+    const guestRoom = guest.wait('estadoSala', state => state.jugadores.length === 2);
+    guest.send('unirse', { nombre: 'Guest', mapa: 'outpost' });
+    await host.wait('estadoSala', state => state.jugadores.length === 2);
+    const guestId = (await guestRoom).jugadores.find(player => player.id !== room.anfitrionId).id;
+    host.send('iniciarSala', {});
+    await host.wait('inicioPartida');
+    const map = await guest.wait('configMapa', state => state.mapa === 'orbital');
+    assert.ok(map.obstaculos.some(object => object.tipo === 'contenedor'));
+    assert.equal((await guest.wait('configPartida', state => state.activa)).mapa, 'orbital');
+    await host.wait('finDeJuego', () => true, 75000);
+    const vote = await host.wait('estadoVotacion', state => state.activa);
+    assert.equal(vote.segundos, 15);
+    assert.equal(vote.electores.length, 2);
+    host.send('unirse', { nombre: 'Antes de tiempo' });
+    assert.equal((await host.wait('entradaRechazada')).motivo, 'votacionEnCurso');
+    spectator.send('votarMapa', { mapa: 'orbital' });
+    assert.match((await spectator.wait('votoRechazado')).motivo, /Solo/);
+    host.send('votarMapa', { mapa: 'constructor' });
+    assert.match((await host.wait('votoRechazado')).motivo, /válido/);
+    host.send('votarMapa', { mapa: 'outpost' });
+    guest.send('votarMapa', { mapa: 'outpost' });
+    await host.wait('estadoVotacion', state => state.recuento.outpost === 2);
+    host.messages.length = 0;
+    guest.messages.length = 0;
+    spectator.messages.length = 0;
+    const ended = await host.wait('estadoVotacion', state => !state.activa, 18000);
+    assert.equal(ended.ganador, 'outpost');
+    await Promise.all([host.wait('inicioPartida'), guest.wait('inicioPartida')]);
+    const next = await host.wait('estadoSala', state => state.activa && state.reglas.mapa === 'outpost');
+    assert.equal(next.reglas.mapa, 'outpost');
+    assert.equal(next.anfitrionId, room.anfitrionId);
+    assert.deepEqual(next.jugadores.map(player => player.id).sort(), [room.anfitrionId, guestId].sort());
+    assert.equal((await host.wait('configMapa')).mapa, 'outpost');
+    const state = await host.wait('estadoJuego', state => state.jugadores[room.anfitrionId]?.unido);
+    assert.equal(state.jugadores[room.anfitrionId].kills, 0);
+    assert.equal(state.jugadores[guestId].unido, true);
+    assert.equal(Object.values(state.jugadores).filter(player => player.unido && !player.esBot).length, 2);
+  });
+
   test(`Abandonar y dificultad en todos los modos (${native ? 'nativo' : 'Socket.IO'})`, { timeout: 20000 }, async (context) => {
     const port = 22000 + Math.floor(Math.random() * 15000);
     const server = spawn(process.execPath, ['server.js', ...(native ? ['--nativo'] : [])], {
@@ -166,5 +222,12 @@ for (const native of [false, true]) {
     late.send('unirse', { nombre: 'Tarde' });
     assert.equal((await late.wait('entradaRechazada')).motivo, 'partidaEnCurso');
     assert.equal(late.messages.some(m => m.type === 'inicioPartida'), false);
+    guest.messages.length = 0;
+    const ready = await guest.wait('estadoJuego', s => s.preparacionRestante === 0);
+    const shooter = ready.jugadores[promoted.anfitrionId];
+    guest.send('disparar', { x: shooter.x, y: shooter.y, angle: 0 });
+    const shot = await guest.wait('estadoJuego', s => s.jugadores[promoted.anfitrionId]?.ultimoDisparo > 0);
+    assert.equal(shot.jugadores[promoted.anfitrionId].ultimoDisparoArma, 'pistola');
+    assert.equal(shot.jugadores[promoted.anfitrionId].balasEnCargador, 11);
   });
 }

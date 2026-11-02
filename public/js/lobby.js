@@ -9,10 +9,25 @@
     duracion: [60, 120, 180, 300].includes(saved.duracion) ? saved.duracion : 120,
     cantidadBots: [0, 5, 11, 15, 20].includes(saved.cantidadBots) ? saved.cantidadBots : 11,
     dificultadBots: ['facil', 'normal', 'dificil'].includes(saved.dificultadBots) ? saved.dificultadBots : 'normal',
+    mapa: ArenaMaps.valid(saved.mapa) ? saved.mapa : 'outpost',
     master: volume(saved.master, 0.65), effects: volume(saved.effects, 0.7), ambient: volume(saved.ambient, 0.25), muted: saved.muted === true,
     save() { try { localStorage.setItem('outpost-settings', JSON.stringify(this)); } catch {} },
   };
   const picker = document.getElementById('skin-picker');
+  window.selectArenaMap = (id, persist = false) => {
+    const map = ArenaMaps.catalog.find(map => map.id === id);
+    if (!map) return;
+    document.getElementById('match-map').value = id;
+    document.getElementById('map-preview').dataset.map = id;
+    document.getElementById('map-name').textContent = map.nombre;
+    document.getElementById('map-description').textContent = map.descripcion;
+    document.body.dataset.map = id;
+    document.querySelector('.lobby-title .eyebrow').textContent = id === 'orbital' ? 'SECTOR 07 / ÓRBITA ALTA' : 'TEMPORADA 01 / TIERRA ABIERTA';
+    document.querySelector('.lobby-footer > span:first-child').textContent = map.nombre.toUpperCase();
+    if (persist) { ui.mapa = id; ui.save(); }
+  };
+  window.selectArenaMap(ui.mapa);
+  document.getElementById('match-map').addEventListener('change', event => window.selectArenaMap(event.target.value, true));
   ui.modo = ['clasico', 'puzzles', 'solo'].includes(saved.modo) ? saved.modo : 'clasico';
   const tabs = [...document.querySelectorAll('[data-mode]')];
   window.selectArenaMode = (mode, persist = true) => {

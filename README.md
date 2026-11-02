@@ -76,6 +76,8 @@ El estado de la partida vive en memoria: reiniciar el proceso elimina la ronda a
 
 ## Dos Modos de Red
 
+Para la explicación técnica y preguntas de exposición, consulta la [guía de sockets y defensa del proyecto](./GUIA-SOCKETS-Y-DEFENSA.md).
+
 | Modo | Comando | Transporte |
 | :--- | :--- | :--- |
 | Predeterminado | `npm start` | Socket.IO |
@@ -115,6 +117,23 @@ La interfaz admite orientación vertical y horizontal. Las pruebas automatizadas
 
 ## Preparar una Partida
 
+### Mapas y próxima ronda
+
+En el menú puedes elegir **Isla Outpost**, el mapa original de bosques y casas, o **Estación Orbital**, una estación cerrada de 6000×6000 con doce salas sin rótulos, pasillos de 300 unidades de ancho y compuertas metálicas corredizas. Se juega con vista interior, sin techos que oculten las salas. Dos cubiertas exteriores conectadas a los pasillos permiten ver el espacio; fuera del suelo de la estación el casco bloquea movimiento y proyectiles. Las compuertas se abren y cierran individualmente con **E** o el botón de interacción móvil, no se cierran sobre jugadores y su estado se sincroniza desde el servidor. Los bots buscan rutas por los pasillos y abren las compuertas cercanas. Hay contenedores como cobertura, cofres y suministros dentro de las salas, sin árboles ni arbustos.
+
+En la estación, el peligro de veneno se sustituye por **agujeros negros animados**: infligen los mismos 5 puntos de daño por segundo, sin atracción ni muerte instantánea. El **hielo** conserva su textura agrietada y su velocidad del 60 %. Los peligros se sitúan dentro de salas transitables y el centro de la tormenta permanece sobre el suelo, para que las reapariciones finales no caigan en el espacio. La isla conserva sus zonas de contaminación e hielo originales. Ambos mapas están disponibles en Clásico, Con puzzles y Un jugador, con Socket.IO y WebSocket nativo. La selección inicial se guarda en el navegador; los invitados heredan el mapa del anfitrión.
+
+Al terminar una ronda normalmente (por bajas o tiempo), aparece en los resultados una **votación de 15 segundos** para el siguiente mapa. También puedes votar desde el menú si pulsas Volver al inicio:
+
+- Votan únicamente los humanos que estaban en la ronda al finalizar; ni los bots ni los espectadores pueden votar.
+- Cada conexión tiene un voto y puede cambiarlo mientras la encuesta siga abierta. Un voto ya emitido se conserva si se desconecta.
+- Gana el mapa con más votos. En empate o sin votos se conserva el mapa de la ronda terminada.
+- No se puede crear otra sala durante la encuesta. Al cerrarse, el servidor **inicia automáticamente otra ronda en el mapa ganador**, sin pulsar Crear sala ni Iniciar partida.
+- Continúan los humanos que terminaron la ronda y siguen conectados, salvo quienes pulsen abandonar durante la encuesta. Volver al inicio permite votar desde el menú, pero no cancela la participación en la siguiente ronda. Los espectadores y quienes abandonaron antes del final no se incorporan automáticamente.
+- Se conservan personajes, modalidad, duración, límite de bajas, cantidad y dificultad de bots. Salud, bajas, equipo y suministros se reinician. Clásico e Individual repiten la cuenta inicial; Con puzzles repite instrucciones, entrenamiento y tienda.
+- Si no queda ningún participante, no se inicia una ronda de bots. El mapa ganador queda reservado para la próxima sala manual.
+- Salir todos o deshacer una sala no abre una encuesta: no es una ronda completada. Reiniciar el servidor borra la encuesta y su resultado, que viven en memoria.
+
 Selecciona una pestaña antes de crear la sala:
 
 | Modalidad | Preparación | Acceso |
@@ -142,7 +161,7 @@ La tienda ofrece escopeta (80), rifle (100), sniper (140), escudo inicial +50 (4
 
 La sala se cierra al comenzar la ronda: no se admiten participantes nuevos durante la partida. El combate empieza tras una preparación de cuatro segundos; durante ella, jugadores, bots y temporizadores permanecen detenidos. Si el anfitrión se desconecta o recarga, el rol pasa a otro participante. Antes de comenzar, el anfitrión puede deshacer la sala y devolver a todos a la pantalla principal.
 
-La arena incluye once bots por defecto. Tras una eliminación, reapareces a los tres segundos. Al finalizar se muestra la clasificación completa y se destacan los tres primeros puestos. Cada jugador conserva sus resultados hasta pulsar **Volver al inicio**, desde donde puede crear una nueva sala o unirse a otra.
+La arena incluye once bots por defecto. Tras una eliminación, reapareces a los tres segundos. Al finalizar se muestra la clasificación completa y se destacan los tres primeros puestos. Los resultados permanecen visibles durante la encuesta; al cerrarse, los participantes pasan automáticamente a la preparación de la siguiente ronda.
 
 El botón de **abandonar partida** (icono de salida, junto al sonido) te devuelve al menú en cualquier modalidad, incluida la sala de espera, las balizas, la tienda y la cuenta inicial. Solo sale quien lo pulsa: si quedan jugadores humanos, la ronda continúa sin reiniciarse y el anfitrión se releva cuando corresponde. Desde el menú puedes pulsar **Volver a la partida** para regresar a esa misma ronda, conservando personaje, posición, salud, equipo, bajas y progreso de preparación. La fase y el reloj siguen avanzando mientras estás fuera. Este permiso pertenece a la conexión que participó, no al nombre: funciona con Socket.IO y WebSocket nativo mientras no recargues ni cierres la página, y no permite entrar a jugadores nuevos. Si sale el último humano, la ronda se cancela, se borra el permiso de regreso y queda disponible una nueva sala.
 
@@ -305,6 +324,10 @@ Vieojuegos-en-REd/
 | Falla Playwright | Instala Chromium y comprueba que 3410 y 3411 estén libres. |
 
 La música del menú empieza tras el primer clic, toque o pulsación de tecla, por las restricciones de reproducción automática del navegador. Se detiene al entrar en una sala, jugar, ver resultados u ocultar la pestaña, y vuelve al regresar al menú. Respeta **Volumen general**, **Ambiente** y **Silenciar todo**; no descarga música externa ni reproduce melodías de Halo.
+
+Los disparos usan sonidos originales sintetizados por arma, no el mismo pitido: la **pistola** tiene un golpe seco y corredera; el **rifle**, un chasquido más agudo y corto; la **escopeta**, una detonación grave y ancha con mecanismo de bombeo; y el **sniper**, un estampido profundo con cola más larga y cerrojo. Se combinan ruido filtrado, cuerpo grave, reflexiones y detalles mecánicos, sin descargar grabaciones externas. Las muestras se generan una sola vez y se reutilizan, con pequeñas variaciones para evitar repeticiones idénticas.
+
+También se oyen los disparos confirmados de otros jugadores y bots cercanos, atenuados por distancia y situados a izquierda o derecha en estéreo, sin duplicar el disparo propio ni reproducir disparos antiguos al unirse. No se revelan enemigos ocultos en arbustos mediante audio. Los puños, consumibles y lanzamiento de granadas no usan disparos de arma de fuego. **Efectos**, **Volumen general** y **Silenciar todo** controlan estos sonidos; al salir de la partida u ocultar la pestaña se detienen sus colas. Hay un límite de doce voces simultáneas, compresión y un limitador suave de picos para controlar las superposiciones. Funciona con ambos transportes y en móvil.
 
 ### Chrome va lento pero Firefox no
 

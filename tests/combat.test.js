@@ -26,7 +26,7 @@ function loadGame() {
   vm.runInContext(`${fs.readFileSync(serverPath, 'utf8')}\nglobalThis.testing = { jugadores, plataformas, balas, itemsEnSuelo, obstaculos, addPlayer, unirseJugador, equiparArma, createBullet, reloadWeapon, exchangeWithPlatform, dropItem, interactuar, moverEntidad, colisionaConObstaculo, respawn, recogerObjeto };`, sandbox);
   const game = sandbox.testing;
   game.unirseSala = game.unirseJugador;
-  vm.runInContext('Object.assign(testing, { processClientMessage, tactical: () => preparacionTactica });', sandbox);
+  vm.runInContext('Object.assign(testing, { processClientMessage, tactical: () => preparacionTactica, configMapa, actualizarVotacionMapa });', sandbox);
   vm.runInContext('Object.assign(testing, { zonaSegura, actualizarZonaSegura, aplicarDañoZona, cofres, procesarRespawns, updateMovement, actualizarBots, iniciarPartida, equipoInicial, finalizarPartida, iniciarDesdeSala, estadoSala });', sandbox);
   for (const id of Object.keys(game.jugadores)) delete game.jugadores[id];
   // Estas pruebas aíslan combate; la admisión y el inicio real se prueban por red.
@@ -104,6 +104,155 @@ test('Un jugador conserva combate clásico y no permite invitados aunque se soli
   game.iniciarDesdeSala('solo');
   assert.equal(game.tactical(), null);
   assert.equal(game.estadoSala().reglas.modoArena, 'clasico');
+});
+
+test('Mapas: selección autoritativa, votación bloquea sala y ganador obliga la siguiente ronda', () => {
+  const { game, messages, advance, tick } = loadGame();
+  for (const id of ['host', 'guest', 'spectator']) game.addPlayer(id);
+  game.unirseSala('host', 'Host', null, 'pulse', { mapa: 'orbital', cantidadBots: 0 });
+  game.unirseSala('guest', 'Guest', null, 'pulse', { mapa: 'outpost' });
+  assert.equal(game.estadoSala().reglas.mapa, 'orbital');
+  assert.equal(game.configMapa().mapa, 'orbital');
+  assert.ok(game.obstaculos.some(object => object.tipo === 'contenedor'));
+  game.iniciarDesdeSala('host');
+  assert.equal(game.cofres.length, 12);
+  assert.ok(game.plataformas.every(platform => !game.colisionaConObstaculo(platform.x, platform.y, 55)));
+  game.finalizarPartida();
+  assert.equal(game.estadoSala().votacion.segundos, 15);
+  assert.deepEqual([...game.estadoSala().votacion.electores].sort(), ['guest', 'host']);
+  const errors = [];
+  const client = { emit: (type, data) => errors.push({ type, data }) };
+  game.unirseSala('host', 'Host', client);
+  assert.equal(errors.at(-1).data.motivo, 'votacionEnCurso');
+  game.processClientMessage('spectator', { type: 'votarMapa', data: { mapa: 'orbital' } }, client);
+  assert.equal(errors.at(-1).type, 'votoRechazado');
+  for (const id of ['host', 'guest']) game.processClientMessage(id, { type: 'votarMapa', data: { mapa: 'outpost' } }, client);
+  advance(14999); tick();
+  assert.equal(game.estadoSala().votacion.activa, true);
+  advance(1); tick();
+  assert.equal(game.estadoSala().mapaSiguiente, null);
+  assert.equal(game.estadoSala().activa, true);
+  game.unirseSala('host', 'Host', client, 'pulse', { mapa: 'orbital', cantidadBots: 0 });
+  assert.equal(game.estadoSala().reglas.mapa, 'outpost');
+  assert.deepEqual([...game.estadoSala().jugadores].map(j => j.nombre).sort(), ['Guest', 'Host']);
+  assert.equal(game.jugadores.spectator.unido, false);
+  assert.equal(game.configMapa().mapa, 'outpost');
+  assert.ok(game.obstaculos.some(object => object.tipo === 'arbol'));
+  assert.ok(!game.obstaculos.some(object => object.tipo === 'contenedor'));
+  assert.equal(game.cofres.length, 12);
+  assert.ok(game.plataformas.every(platform => !game.colisionaConObstaculo(platform.x, platform.y, 55)));
+  game.iniciarDesdeSala('host');
+  assert.equal(game.estadoSala().activa, true);
+  assert.ok(messages.some(message => message.type === 'estadoVotacion' && message.data.ganador === 'outpost'));
+});
+
+for (const mode of ['clasico', 'puzzles', 'solo']) {
+  test(`Votación reinicia automáticamente ${mode}, conserva reglas y excluye salidas`, () => {
+    const { game, messages, advance, tick } = loadGame();
+    for (const id of ['host', 'guest', 'spectator']) game.addPlayer(id);
+    game.unirseSala('host', 'Host', null, 'nova', {
+      mapa: 'outpost', modoArena: mode, soloJugador: mode === 'solo', duracion: 180,
+      cantidadBots: 5, dificultadBots: 'dificil', limiteKills: 20,
+    });
+    if (mode !== 'solo') game.unirseSala('guest', 'Guest');
+    game.iniciarDesdeSala('host');
+    game.finalizarPartida();
+    game.processClientMessage('host', { type: 'votarMapa', data: { mapa: 'orbital' } });
+    const client = { emit() {} };
+    if (mode !== 'solo') game.processClientMessage('guest', { type: 'abandonarPartida', data: {} }, client);
+    advance(15000); tick();
+    const room = game.estadoSala();
+    assert.equal(room.activa, true);
+    assert.equal(room.reglas.mapa, 'orbital');
+    assert.equal(room.reglas.cantidadBots, 5);
+    assert.equal(room.reglas.dificultadBots, 'dificil');
+    assert.equal(room.reglas.duracion, 180);
+    assert.equal(room.reglas.limiteKills, 20);
+    assert.equal(room.reglas.soloJugador, mode === 'solo');
+    assert.equal(room.reglas.modoArena, mode === 'puzzles' ? 'puzzles' : 'clasico');
+    assert.deepEqual([...room.jugadores].map(j => j.id), ['host']);
+    assert.equal(game.jugadores.host.skin, 'nova');
+    assert.equal(game.jugadores.host.kills, 0);
+    assert.ok(!game.colisionaConObstaculo(game.jugadores.host.x, game.jugadores.host.y));
+    assert.equal(Object.values(game.jugadores).filter(j => j.esBot).length, 5);
+    assert.equal(messages.filter(message => message.type === 'configPartida' && message.data.activa).length, 2);
+    assert.equal(!!game.tactical(), mode === 'puzzles');
+    assert.ok(game.plataformas.every(platform => platform.objeto));
+  });
+}
+
+test('Sin participantes tras la encuesta no arranca una ronda de bots', () => {
+  const { game, messages, advance, tick } = loadGame();
+  game.addPlayer('host');
+  game.unirseSala('host', 'Host', null, 'nova', { cantidadBots: 5 });
+  game.iniciarDesdeSala('host');
+  game.finalizarPartida();
+  game.processClientMessage('host', { type: 'abandonarPartida' }, { emit() {} });
+  advance(15000); tick();
+  assert.equal(game.estadoSala().activa, false);
+  assert.equal(messages.filter(message => message.type === 'inicioPartida').length, 1);
+});
+
+test('Compuertas: interacción independiente, paso abierto y cierre sin aplastar jugadores', () => {
+  const { game } = loadGame();
+  game.addPlayer('host');
+  game.unirseSala('host', 'Host', null, 'nova', { mapa: 'orbital', cantidadBots: 0 });
+  game.iniciarDesdeSala('host');
+  const room = game.obstaculos.find(object => object.puertas?.length === 2);
+  const Buildings = require('../public/js/buildings');
+  const door = Buildings.doors(room)[0];
+  const player = game.jugadores.host;
+  Object.assign(player, { x: door.x + 70, y: door.y + door.height / 2 });
+  assert.ok(game.colisionaConObstaculo(door.x + 9, player.y));
+  game.interactuar('host');
+  assert.equal(room.puertas[0].abierta, true);
+  assert.equal(room.puertas[1].abierta, false);
+  assert.equal(game.colisionaConObstaculo(door.x + 9, player.y), false);
+  player.x = door.x + 9;
+  game.interactuar('host');
+  assert.equal(room.puertas[0].abierta, true);
+  player.x = door.x + 70;
+  game.interactuar('host');
+  assert.equal(room.puertas[0].abierta, false);
+});
+
+test('Bots encuentran un pasillo y abren la compuerta al salir de una sala', () => {
+  const { game, advance } = loadGame();
+  game.addPlayer('host');
+  game.unirseSala('host', 'Host', null, 'nova', { mapa: 'orbital', cantidadBots: 5, dificultadBots: 'dificil' });
+  game.iniciarDesdeSala('host');
+  for (const id of ['bot2', 'bot3', 'bot4', 'bot5']) delete game.jugadores[id];
+  const bot = game.jugadores.bot1;
+  Object.assign(bot, { x: 1400, y: 800 });
+  Object.assign(game.jugadores.host, { x: 2000, y: 1400 });
+  advance(4000);
+  for (let i = 0; i < 340; i += 1) {
+    advance(1000 / 30);
+    game.actualizarBots();
+    assert.ok(!game.colisionaConObstaculo(bot.x, bot.y));
+  }
+  assert.ok(Math.hypot(bot.x - 2000, bot.y - 1400) < 70);
+  assert.ok(game.obstaculos.find(object => object.id === 'modulo-0').puertas[0].abierta);
+});
+
+test('Estación: la tormenta final y las reapariciones permanecen sobre suelo transitable', () => {
+  const { game, advance } = loadGame();
+  game.addPlayer('host');
+  game.unirseSala('host', 'Host', null, 'nova', { mapa: 'orbital', cantidadBots: 0 });
+  game.iniciarDesdeSala('host');
+  for (let i = 0; i < 40; i += 1) {
+    advance(20000);
+    game.actualizarZonaSegura();
+    assert.ok(!game.colisionaConObstaculo(game.zonaSegura.x, game.zonaSegura.y));
+  }
+  assert.equal(game.zonaSegura.radio, 400);
+  for (let i = 0; i < 30; i += 1) {
+    game.respawn(game.jugadores.host);
+    advance(3000); game.procesarRespawns();
+    const player = game.jugadores.host;
+    assert.ok(!game.colisionaConObstaculo(player.x, player.y));
+    assert.ok(Math.hypot(player.x - game.zonaSegura.x, player.y - game.zonaSegura.y) <= game.zonaSegura.radio - 60);
+  }
 });
 
 for (const [phase, elapsed] of [['instrucciones', 0], ['puzzles', 10000], ['tienda', 65000], ['cuenta', 85000], ['combate', 89000]]) {
@@ -519,6 +668,28 @@ test('Rifle permite tres disparos por segundo y supera la cadencia de pistola', 
     assert.equal(game.balas.length, expected * (weapon === 'escopeta' ? 3 : 1));
     assert.equal(player.balasEnCargador, 30 - expected);
   }
+});
+
+test('Audio remoto identifica el arma que disparó, no la equipada después ni intentos rechazados', () => {
+  const { game, advance } = loadGame();
+  game.addPlayer('player'); game.unirseJugador('player', 'Jugador');
+  const player = game.jugadores.player;
+  for (const weapon of ['pistola', 'rifle', 'escopeta', 'sniper']) {
+    player.inventario[1] = weapon;
+    player.municionPorSlot[1] = 30;
+    game.equiparArma(player);
+    advance(1600);
+    game.createBullet('player', { x: player.x, y: player.y, angle: 0 });
+    assert.equal(player.ultimoDisparoArma, weapon);
+    player.inventario[1] = 'pistola';
+    game.equiparArma(player);
+    game.createBullet('player', { x: player.x, y: player.y, angle: 0 });
+    assert.equal(player.ultimoDisparoArma, weapon);
+  }
+  player.inventario[2] = 'granada';
+  advance(1600);
+  game.processClientMessage('player', { type: 'lanzarGranada', data: { angle: 0 } });
+  assert.equal(player.ultimoDisparoArma, 'granada');
 });
 
 test('Equipo inicial y reaparición dan pistola 12/24 y conservan puños', () => {

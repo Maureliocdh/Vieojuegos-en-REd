@@ -1,5 +1,8 @@
 const path = require('path');
 const { Tactical } = require('./lib/tactical');
+const { MapVote } = require('./lib/map-vote');
+const { Navigation } = require('./lib/navigation');
+const Maps = require('./public/js/maps');
 const express = require('express');
 const http = require('http');
 const { skins } = require('./public/js/assets.js');
@@ -12,58 +15,14 @@ const PORT = process.env.PORT || 3000;
 const nativeMode = process.argv.includes('--nativo');
 const jugadores = {};
 const balas = [];
-const plataformas = [
-  { x: 900,  y: 900,  objeto: null },
-  { x: 3000, y: 900,  objeto: null },
-  { x: 5100, y: 1500, objeto: null },
-  { x: 1500, y: 4500, objeto: null },
-  { x: 4200, y: 4800, objeto: null },
-  { x: 2400, y: 2400, objeto: null },
-  { x: 4800, y: 3000, objeto: null },
-  { x: 1200, y: 3000, objeto: null },
-  { x: 3600, y: 1800, objeto: null },
-  { x: 3000, y: 5400, objeto: null },
-];
-const obstaculos = [
-  { x:  660, y:  660, width: 420, height: 300 },
-  { x: 2280, y: 1260, width: 660, height: 270 },
-  { x: 3960, y:  780, width: 360, height: 660 },
-  { x: 1080, y: 3150, width: 780, height: 300 },
-  { x: 3180, y: 3540, width: 390, height: 780 },
-  { x: 4680, y: 4740, width: 720, height: 330 },
-  { x: 1800, y: 1800, width: 300, height: 300 },
-  { x: 4500, y: 2100, width: 450, height: 240 },
-  { x: 2700, y: 4200, width: 360, height: 360 },
-  { x:  900, y: 5100, width: 480, height: 200 },
-  { x: 5400, y: 4200, width: 300, height: 420 },
-  { x: 2400, y: 600,  width: 240, height: 300 },
-];
-obstaculos.forEach((obstaculo, index) => {
-  obstaculo.tipo = index % 3 === 0 ? 'almacen' : 'casa';
-  obstaculo.id = `edificio-${index}`;
-  obstaculo.puertaAbierta = false;
-});
-for (let index = 0; index < 160; index += 1) {
-  const objeto = {
-    x: 160 + ((index * 977) % 5650),
-    y: 160 + ((index * 619) % 5650),
-    width: index % 3 === 0 ? 70 : 92,
-    height: index % 3 === 0 ? 60 : 92,
-    tipo: index % 3 === 0 ? 'roca' : 'arbol',
-  };
-  if (obstaculos.some((otro) => objeto.x < otro.x + otro.width + 100
-    && objeto.x + objeto.width + 100 > otro.x && objeto.y < otro.y + otro.height + 100
-    && objeto.y + objeto.height + 100 > otro.y)) continue;
-  if (plataformas.some((plataforma) => Math.hypot(plataforma.x - objeto.x, plataforma.y - objeto.y) < 180)) continue;
-  obstaculos.push(objeto);
-}
-for (let index = 0; index < 100; index += 1) {
-  const bush = { id: `arbusto-${index}`, tipo: 'arbusto', x: 220 + (index * 733) % 5500,
-    y: 280 + (index * 1091) % 5500, width: 190, height: 160 };
-  if (obstaculos.some((object) => bush.x < object.x + object.width + 40 && bush.x + bush.width + 40 > object.x
-    && bush.y < object.y + object.height + 40 && bush.y + bush.height + 40 > object.y)) continue;
-  obstaculos.push(bush);
-}
+let mapaActual = 'outpost';
+let mapaSiguiente = null;
+let votacionMapa = null;
+let ultimoSegundoVotacion = null;
+let siguienteRonda = null;
+const { platforms: plataformas, obstacles: obstaculos } = Maps.create(mapaActual);
+let navegacion = null;
+const rutasBots = new Map();
 // Items sueltos tirados por jugadores: { id, x, y, item }
 const itemsEnSuelo = [];
 let nextItemId = 1;
@@ -140,6 +99,11 @@ function prepararCierreZona(ahora, espera) {
     y: Math.max(800, Math.min(MAP_HEIGHT - 800, zonaSegura.y + (Math.random() * 2 - 1) * desplazamiento)),
     radio,
   };
+  if (mapaActual === 'orbital' && (colisionaConObstaculo(zonaSegura.objetivo.x, zonaSegura.objetivo.y, 100)
+    || SpecialZones.zones.some(zone => Math.hypot(zone.x - zonaSegura.objetivo.x, zone.y - zonaSegura.objetivo.y) < zone.radio + 80))) {
+    zonaSegura.objetivo.x = zonaSegura.x;
+    zonaSegura.objetivo.y = zonaSegura.y;
+  }
   zonaSegura.estado = 'espera';
   zonaSegura.finEtapa = ahora + espera;
   transicionZona = { x: zonaSegura.x, y: zonaSegura.y, radio: zonaSegura.radio };
@@ -271,14 +235,15 @@ function actualizarPreparacionTactica() {
 }
 
 function estadoSala() {
-  return { anfitrionId, activa: partidaEnCurso, finalizada: partidaFinalizada, reingresos: [...jugadoresAusentes.keys()],
+  return { anfitrionId, activa: partidaEnCurso, finalizada: partidaFinalizada, votacion: votacionMapa?.snapshot(Date.now()) ?? null,
+    mapaSiguiente, reingresos: [...jugadoresAusentes.keys()],
     reglas: opcionesSala, jugadores: Object.entries(jugadores)
       .filter(([, j]) => j.unido && !j.esBot)
       .map(([id, j]) => ({ id, nombre: j.nombre, skin: j.skin })) };
 }
 function publicarSala() { broadcast('estadoSala', estadoSala()); }
 function iniciarDesdeSala(id) {
-  if (id !== anfitrionId || !jugadores[id]?.unido || partidaEnCurso || partidaFinalizada) return;
+  if (id !== anfitrionId || !jugadores[id]?.unido || partidaEnCurso || partidaFinalizada || votacionMapa?.snapshot(Date.now()).activa) return;
   finPreparacion = Date.now() + (opcionesSala.modoArena === 'puzzles' ? 89000 : 4000);
   iniciarPartida(opcionesSala);
   for (const jugador of Object.values(jugadores)) {
@@ -298,17 +263,86 @@ function iniciarDesdeSala(id) {
 }
 
 function reglasPartida() {
-  return { limiteKills, duracion: duracionPartida, cantidadBots, dificultadBots, soloJugador: modoSoloJugador, modoArena: opcionesSala.modoArena || 'clasico', activa: partidaEnCurso, finalizada: partidaFinalizada };
+  return { limiteKills, duracion: duracionPartida, cantidadBots, dificultadBots, mapa: mapaActual, mapaSiguiente,
+    votacionActiva: !!votacionMapa && !votacionMapa.ganador,
+    soloJugador: modoSoloJugador, modoArena: opcionesSala.modoArena || 'clasico', activa: partidaEnCurso, finalizada: partidaFinalizada };
+}
+
+function configMapa() {
+  return { MAP_WIDTH, MAP_HEIGHT, mapa: mapaActual, obstaculos, zonasEspeciales: SpecialZones.zones };
+}
+function cargarMapa(id) {
+  if (id === mapaActual) return;
+  const map = Maps.create(id);
+  mapaActual = id;
+  zonaSegura.x = MAP_WIDTH / 2;
+  zonaSegura.y = id === 'orbital' ? 3600 : MAP_HEIGHT / 2;
+  zonaSegura.radio = Math.hypot(MAP_WIDTH, MAP_HEIGHT) / 2;
+  obstaculos.splice(0, obstaculos.length, ...map.obstacles);
+  navegacion = id === 'orbital' ? new Navigation(obstaculos) : null;
+  rutasBots.clear();
+  plataformas.splice(0, plataformas.length, ...map.platforms);
+  cofres.length = 0;
+  itemsEnSuelo.length = 0;
+  balas.length = 0;
+  granadas.length = 0;
+  prepararObjetosMapa();
+  generarZonasEspeciales();
+}
+function generarZonasEspeciales() {
+  if (mapaActual === 'orbital') SpecialZones.generateStation(Maps.stationLayout().rooms);
+  else SpecialZones.generate(MAP_WIDTH, MAP_HEIGHT, obstaculos.filter(Buildings.isBuilding));
+}
+function cerrarPuertas() {
+  for (const edificio of obstaculos.filter(Buildings.isBuilding)) {
+    edificio.puertaAbierta = false;
+    for (const puerta of edificio.puertas || []) puerta.abierta = false;
+  }
+}
+function actualizarVotacionMapa() {
+  if (!votacionMapa || votacionMapa.ganador) return;
+  if (votacionMapa.close(Date.now())) {
+    mapaSiguiente = votacionMapa.ganador;
+    broadcast('configPartida', reglasPartida());
+    publicarSala();
+  }
+  const state = votacionMapa.snapshot(Date.now());
+  if (state.segundos !== ultimoSegundoVotacion) {
+    ultimoSegundoVotacion = state.segundos;
+    broadcast('estadoVotacion', state);
+  }
+  if (votacionMapa.ganador && siguienteRonda) {
+    const participantes = [...siguienteRonda.ids].filter(id => jugadores[id] && !jugadores[id].esBot);
+    const opciones = siguienteRonda.opciones;
+    siguienteRonda = null;
+    if (!participantes.length) return;
+    opcionesSala = { ...opciones, mapa: mapaSiguiente };
+    anfitrionId = participantes[0];
+    for (const id of participantes) jugadores[id].unido = true;
+    mapaSiguiente = null;
+    cargarMapa(opcionesSala.mapa);
+    publicarSala();
+    iniciarDesdeSala(anfitrionId);
+  }
 }
 
 function iniciarPartida(opciones = {}) {
   if (partidaEnCurso || partidaFinalizada) return;
-  SpecialZones.generate(MAP_WIDTH, MAP_HEIGHT, obstaculos.filter(Buildings.isBuilding));
-  broadcast('configMapa', { MAP_WIDTH, MAP_HEIGHT, obstaculos, zonasEspeciales: SpecialZones.zones });
+  if (Maps.valid(opciones.mapa)) cargarMapa(opciones.mapa);
+  cerrarPuertas();
+  rutasBots.clear();
+  cofres.length = 0;
+  itemsEnSuelo.length = 0;
+  prepararObjetosMapa();
+  generarZonasEspeciales();
+  broadcast('configMapa', configMapa());
   limiteKills = [5, 10, 20, 30].includes(opciones.limiteKills) ? opciones.limiteKills : 10;
   duracionPartida = [60, 120, 180, 300].includes(opciones.duracion) ? opciones.duracion : 120;
   modoSoloJugador = opciones.soloJugador === true;
   dificultadBots = validarDificultad(opciones.dificultadBots);
+  zonaSegura.x = MAP_WIDTH / 2;
+  zonaSegura.y = mapaActual === 'orbital' ? 3600 : MAP_HEIGHT / 2;
+  zonaSegura.radio = Math.hypot(MAP_WIDTH, MAP_HEIGHT) / 2;
   const nuevosBots = [0, 5, 11, 15, 20].includes(opciones.cantidadBots) ? opciones.cantidadBots : 11;
   if (nuevosBots !== cantidadBots) {
     for (const [id, jugador] of Object.entries(jugadores)) {
@@ -321,9 +355,6 @@ function iniciarPartida(opciones = {}) {
   tiempoRestante = duracionPartida;
   broadcast('configPartida', reglasPartida());
   // Reinicia la zona segura al tamaño máximo del mapa.
-  zonaSegura.x = MAP_WIDTH / 2;
-  zonaSegura.y = MAP_HEIGHT / 2;
-  zonaSegura.radio = Math.hypot(MAP_WIDTH, MAP_HEIGHT) / 2;
   zonaSegura.fase = 0;
   zonaSegura.dañoPorSegundo = 0;
   ultimoDañoZona = Date.now();
@@ -354,6 +385,10 @@ function finalizarPartida() {
     .map(([id, jugador]) => ({ id, nombre: jugador.nombre, skin: jugador.skin, esBot: jugador.esBot, kills: jugador.kills || 0 }));
   broadcast('finDeJuego', podio);
 
+  votacionMapa = new MapVote(podio.filter(jugador => !jugador.esBot).map(jugador => jugador.id), mapaActual, Date.now());
+  siguienteRonda = { ids: new Set(votacionMapa.electores), opciones: { ...reglasPartida(), ...opcionesSala } };
+  ultimoSegundoVotacion = 15;
+  broadcast('estadoVotacion', votacionMapa.snapshot(Date.now()));
   reiniciarMundo();
 }
 
@@ -383,7 +418,7 @@ function reiniciarMundo() {
     for (const jugador of Object.values(jugadores)) equipoInicial(jugador);
     cofres.forEach((cofre) => { cofre.abierto = false; });
     generarMunicionMapa();
-    obstaculos.filter(Buildings.isBuilding).forEach((edificio) => { edificio.puertaAbierta = false; });
+    cerrarPuertas();
     plataformas.forEach((plataforma) => { plataforma.objeto = null; });
     tiempoRestante = 120;
     partidaFinalizada = false;
@@ -406,6 +441,11 @@ function cerrarSala(id) {
 function unirseJugador(id, nombre, client = null, skin = 'pulse', opciones = {}) {
   const jugador = jugadores[id];
   if (!jugador || jugador.esBot || jugador.unido || partidaFinalizada) return;
+  actualizarVotacionMapa();
+  if (votacionMapa && !votacionMapa.ganador) {
+    if (client) sendToClient(client, 'entradaRechazada', { motivo: 'votacionEnCurso' });
+    return;
+  }
   const anterior = jugadoresAusentes.get(id);
   if (partidaEnCurso && anterior && client) {
     jugadores[id] = anterior.jugador;
@@ -433,8 +473,13 @@ function unirseJugador(id, nombre, client = null, skin = 'pulse', opciones = {})
     return;
   }
   if (!anfitrionId) {
+    const mapa = mapaSiguiente || (Maps.valid(opciones.mapa) ? opciones.mapa : 'outpost');
+    mapaSiguiente = null;
+    votacionMapa = null;
+    cargarMapa(mapa);
     anfitrionId = id;
     opcionesSala = {
+      mapa,
       limiteKills: [5,10,20,30].includes(opciones.limiteKills) ? opciones.limiteKills : 10,
       duracion: [60,120,180,300].includes(opciones.duracion) ? opciones.duracion : 120,
       cantidadBots: [0,5,11,15,20].includes(opciones.cantidadBots) ? opciones.cantidadBots : 11,
@@ -442,6 +487,8 @@ function unirseJugador(id, nombre, client = null, skin = 'pulse', opciones = {})
       soloJugador: opciones.soloJugador === true,
       modoArena: opciones.soloJugador !== true && opciones.modoArena === 'puzzles' ? 'puzzles' : 'clasico',
     };
+    broadcast('configMapa', configMapa());
+    broadcast('configPartida', reglasPartida());
   }
   const nombreLimpio = typeof nombre === 'string' ? nombre.trim().slice(0, 16) : '';
   jugador.nombre = nombreLimpio || `Jugador_${id.slice(0, 5)}`;
@@ -475,9 +522,13 @@ function puntoEnObstaculo(x, y) {
 
 /** Busca una posición de aparición libre, dentro de la zona segura y fuera de obstáculos. */
 function obtenerPosicionSpawn() {
+  const minX = Math.max(RESPAWN_MARGIN, zonaSegura.x - zonaSegura.radio + 60);
+  const maxX = Math.min(MAP_WIDTH - RESPAWN_MARGIN, zonaSegura.x + zonaSegura.radio - 60);
+  const minY = Math.max(RESPAWN_MARGIN, zonaSegura.y - zonaSegura.radio + 60);
+  const maxY = Math.min(MAP_HEIGHT - RESPAWN_MARGIN, zonaSegura.y + zonaSegura.radio - 60);
   for (let intento = 0; intento < 150; intento += 1) {
-    const x = RESPAWN_MARGIN + Math.random() * (MAP_WIDTH - RESPAWN_MARGIN * 2);
-    const y = RESPAWN_MARGIN + Math.random() * (MAP_HEIGHT - RESPAWN_MARGIN * 2);
+    const x = minX + Math.random() * (maxX - minX);
+    const y = minY + Math.random() * (maxY - minY);
     // Rechaza posiciones fuera de la zona segura (con margen de 60px para no spawnear justo en el borde)
     if (zonaSegura && Math.hypot(x - zonaSegura.x, y - zonaSegura.y) > zonaSegura.radio - 60) continue;
     const ocupado = Object.values(jugadores).some((jugador) => (
@@ -486,7 +537,15 @@ function obtenerPosicionSpawn() {
     if (!colisionaConObstaculo(x, y) && !ocupado && !SpecialZones.zones.some((zone) => Math.hypot(x - zone.x, y - zone.y) <= zone.radio + PLAYER_RADIUS)) return { x, y };
   }
 
-  // Respaldo: el centro de la zona segura siempre está dentro.
+  if (navegacion) {
+    const candidatos = [...navegacion.nodes.values()].sort((a, b) => Math.hypot(a.x - zonaSegura.x, a.y - zonaSegura.y)
+      - Math.hypot(b.x - zonaSegura.x, b.y - zonaSegura.y));
+    const libre = candidatos.find(({ x, y }) => Math.hypot(x - zonaSegura.x, y - zonaSegura.y) <= zonaSegura.radio - 60
+      && !colisionaConObstaculo(x, y)
+      && !SpecialZones.zones.some(zone => Math.hypot(x - zone.x, y - zone.y) <= zone.radio + PLAYER_RADIUS));
+    if (!libre) throw new Error('No hay suelo transitable para reaparecer dentro de la estación');
+    return { x: libre.x, y: libre.y };
+  }
   return { x: zonaSegura.x, y: zonaSegura.y };
 }
 
@@ -604,6 +663,7 @@ function generarBot(id) {
 }
 
 function removePlayer(id, conservar = false) {
+  siguienteRonda?.ids.delete(id);
   if (conservar && partidaEnCurso && jugadores[id]?.unido) {
     const jugador = jugadores[id];
     jugador.recargando = false;
@@ -631,6 +691,7 @@ function removePlayer(id, conservar = false) {
 
 function abandonarPartida(id, client) {
   if (!jugadores[id] || !client) return;
+  siguienteRonda?.ids.delete(id);
   if (jugadores[id].unido) {
     for (let index = balas.length - 1; index >= 0; index -= 1) {
       if (balas[index].propietarioId === id) balas.splice(index, 1);
@@ -692,6 +753,7 @@ function createBullet(id, { x, y, angle } = {}) {
   // Cooldown autoritativo: los mensajes que llegan demasiado pronto se ignoran.
   if (ahora - jugador.ultimoDisparo < stats.cooldown) return;
   jugador.ultimoDisparo = ahora;
+  jugador.ultimoDisparoArma = nombreArma;
   if (stats.capacidadCargador > 0) {
     jugador.balasEnCargador -= 1;
     jugador.municionPorSlot[jugador.slotSeleccionado] = jugador.balasEnCargador;
@@ -746,16 +808,16 @@ function interactuar(id) {
     regalos.forEach((regalo, index) => itemsEnSuelo.push({ id: `drop_${nextItemId++}`, x: cofre.x + (index - 1) * 65, y: cofre.y + 60, ...regalo }));
     return;
   }
-  const cercano = obstaculos.filter(Buildings.isBuilding).map((edificio) => {
-    const puerta = Buildings.door(edificio);
-    return { edificio, puerta, distancia: Math.hypot(jugador.x - puerta.x - puerta.width / 2, jugador.y - puerta.y - puerta.height / 2) };
-  }).filter((candidate) => candidate.distancia <= 105).sort((left, right) => left.distancia - right.distancia)[0];
+  const cercano = obstaculos.filter(Buildings.isBuilding).flatMap(edificio => Buildings.doors(edificio).map(puerta => ({
+    edificio, puerta, distancia: Math.hypot(jugador.x - puerta.x - puerta.width / 2, jugador.y - puerta.y - puerta.height / 2),
+  }))).filter((candidate) => candidate.distancia <= 105).sort((left, right) => left.distancia - right.distancia)[0];
   if (!cercano) { exchangeWithPlatform(id); return; }
   const { edificio, puerta } = cercano;
-  if (edificio.puertaAbierta && Object.values(jugadores).some((player) => player.unido && !player.muerto
+  if (puerta.abierta && Object.values(jugadores).some((player) => player.unido && !player.muerto
     && player.x > puerta.x - PLAYER_RADIUS && player.x < puerta.x + puerta.width + PLAYER_RADIUS
     && player.y > puerta.y - PLAYER_RADIUS && player.y < puerta.y + puerta.height + PLAYER_RADIUS)) return;
-  edificio.puertaAbierta = !edificio.puertaAbierta;
+  if (edificio.puertas) edificio.puertas[puerta.index].abierta = !puerta.abierta;
+  else edificio.puertaAbierta = !puerta.abierta;
 }
 
 /** Intercambia el objeto del slot seleccionado por el botín de una plataforma cercana. */
@@ -816,6 +878,13 @@ function dropItem(id, { slot } = {}) {
 
 function processClientMessage(id, message, client = null) {
   if (!message || typeof message !== 'object') return;
+  if (message.type === 'votarMapa') {
+    actualizarVotacionMapa();
+    const error = votacionMapa ? votacionMapa.vote(id, message.data?.mapa, Date.now()) : 'No hay una votación disponible.';
+    if (error && client) sendToClient(client, 'votoRechazado', { motivo: error });
+    else if (!error) broadcast('estadoVotacion', votacionMapa.snapshot(Date.now()));
+    return;
+  }
   if (message.type === 'abandonarPartida') {
     abandonarPartida(id, client);
     return;
@@ -854,7 +923,7 @@ if (nativeMode) {
     sendToClient(socket, 'identidad', { id });
     sendToClient(socket, 'configPartida', reglasPartida());
     sendToClient(socket, 'estadoSala', estadoSala());
-    sendToClient(socket, 'configMapa', { MAP_WIDTH, MAP_HEIGHT, obstaculos, zonasEspeciales: SpecialZones.zones });
+    sendToClient(socket, 'configMapa', configMapa());
 
     socket.on('message', (rawMessage) => {
       try {
@@ -874,11 +943,11 @@ if (nativeMode) {
     const { id } = socket;
     addPlayer(id);
     console.log(`Conectado: ${id}`);
-    sendToClient(socket, 'configMapa', { MAP_WIDTH, MAP_HEIGHT, obstaculos, zonasEspeciales: SpecialZones.zones });
+    sendToClient(socket, 'configMapa', configMapa());
     sendToClient(socket, 'configPartida', reglasPartida());
     sendToClient(socket, 'estadoSala', estadoSala());
 
-    for (const type of ['abandonarPartida', 'moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada']) {
+    for (const type of ['votarMapa', 'abandonarPartida', 'moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada']) {
       socket.on(type, (data) => processClientMessage(id, { type, data }, socket));
     }
     socket.on('disconnect', () => removePlayer(id));
@@ -1004,10 +1073,28 @@ function actualizarBots() {
 
     // Se acerca sin abandonar los límites del mapa.
     if (distanciaObjetivo > 55) {
+      let destino = objetivo;
+      if (navegacion) {
+        for (const edificio of obstaculos.filter(Buildings.isBuilding)) {
+          for (const puerta of Buildings.doors(edificio)) {
+            if (Math.hypot(bot.x - puerta.x - puerta.width / 2, bot.y - puerta.y - puerta.height / 2) < 140) {
+              edificio.puertas[puerta.index].abierta = true;
+            }
+          }
+        }
+        let ruta = rutasBots.get(botId);
+        if (!ruta || Date.now() >= ruta.hasta || Math.hypot(objetivo.x - ruta.x, objetivo.y - ruta.y) > 200) {
+          ruta = { puntos: navegacion.path(bot, objetivo), hasta: Date.now() + 1500, x: objetivo.x, y: objetivo.y };
+          rutasBots.set(botId, ruta);
+        }
+        while (ruta.puntos.length && Math.hypot(bot.x - ruta.puntos[0].x, bot.y - ruta.puntos[0].y) < 12) ruta.puntos.shift();
+        if (ruta.puntos.length) destino = ruta.puntos[0];
+      }
+      const direccion = Math.atan2(destino.y - bot.y, destino.x - bot.x);
       moverEntidad(
         bot,
-        bot.x + Math.cos(bot.angle) * (dificultad.velocidad / TICK_RATE) * SpecialZones.effects(bot).speedMultiplier,
-        bot.y + Math.sin(bot.angle) * (dificultad.velocidad / TICK_RATE) * SpecialZones.effects(bot).speedMultiplier,
+        bot.x + Math.cos(direccion) * (dificultad.velocidad / TICK_RATE) * SpecialZones.effects(bot).speedMultiplier,
+        bot.y + Math.sin(direccion) * (dificultad.velocidad / TICK_RATE) * SpecialZones.effects(bot).speedMultiplier,
       );
     }
 
@@ -1035,6 +1122,7 @@ function lanzarGranada(id, { angle } = {}) {
   const ahora = Date.now();
   if (ahora - jugador.ultimoDisparo < (STATS_ARMAS.granada.cooldown || 1500)) return;
   jugador.ultimoDisparo = ahora;
+  jugador.ultimoDisparoArma = 'granada';
   jugador.inventario[slotGranada] = null;
   jugador.municionPorSlot[slotGranada] = null;
   if (jugador.slotSeleccionado === slotGranada) equiparArma(jugador);
@@ -1129,6 +1217,7 @@ function aplicarZonasEspeciales() {
 
 // Game loop compartido: no depende de cuál transporte esté activo.
 setInterval(() => {
+  actualizarVotacionMapa();
   preparacionTactica?.tick(Date.now());
   actualizarPreparacionTactica();
   if (!partidaEnCurso || Date.now() < finPreparacion) {
@@ -1250,22 +1339,25 @@ function generarMunicionMapa() {
   });
 }
 
-for (const [index, plataforma] of plataformas.entries()) {
-  if (colisionaConObstaculo(plataforma.x, plataforma.y, PLATFORM_RADIUS)) {
-    const edificio = obstaculos.find((objeto) => plataforma.x >= objeto.x - PLATFORM_RADIUS
-      && plataforma.x <= objeto.x + objeto.width + PLATFORM_RADIUS
-      && plataforma.y >= objeto.y - PLATFORM_RADIUS && plataforma.y <= objeto.y + objeto.height + PLATFORM_RADIUS);
-    plataforma.y = edificio.y + edificio.height + 100;
+function prepararObjetosMapa() {
+  for (const [index, plataforma] of plataformas.entries()) {
+    if (colisionaConObstaculo(plataforma.x, plataforma.y, PLATFORM_RADIUS)) {
+      const edificio = obstaculos.find((objeto) => plataforma.x >= objeto.x - PLATFORM_RADIUS
+        && plataforma.x <= objeto.x + objeto.width + PLATFORM_RADIUS
+        && plataforma.y >= objeto.y - PLATFORM_RADIUS && plataforma.y <= objeto.y + objeto.height + PLATFORM_RADIUS);
+      plataforma.y = edificio.y + edificio.height + 100;
+    }
+    plataforma.objeto = LOOT[index % LOOT.length];
+    plataforma.balas = STATS_ARMAS[plataforma.objeto]?.capacidadCargador ?? null;
   }
-  plataforma.objeto = LOOT[index % LOOT.length];
-  plataforma.balas = STATS_ARMAS[plataforma.objeto]?.capacidadCargador ?? null;
+  generarMunicionMapa();
+  for (const edificio of obstaculos.filter(Buildings.isBuilding)) {
+    cofres.push({ id: `cofre-${cofres.length}`, x: edificio.x + edificio.width / 2, y: edificio.y + 65, abierto: false });
+  }
 }
-generarMunicionMapa();
-for (const edificio of obstaculos.filter(Buildings.isBuilding)) {
-  cofres.push({ id: `cofre-${cofres.length}`, x: edificio.x + edificio.width / 2, y: edificio.y + 65, abierto: false });
-}
+prepararObjetosMapa();
 
-SpecialZones.generate(MAP_WIDTH, MAP_HEIGHT, obstaculos.filter(Buildings.isBuilding));
+generarZonasEspeciales();
 
 server.listen(PORT, () => {
   console.log(`Servidor (${nativeMode ? 'WebSocket nativo' : 'Socket.IO'}) en http://localhost:${PORT}`);
