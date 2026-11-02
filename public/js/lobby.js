@@ -2,7 +2,15 @@
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('outpost-settings')) || {}; } catch {}
   const volume = (value, fallback) => Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
+  const crosshairs = [
+    { id: 'classic', name: 'Clásica', file: 'crosshair.svg' },
+    { id: 'cross', name: 'Cruz', file: 'crosshair-cross.svg' },
+    { id: 'dot', name: 'Punto', file: 'crosshair-dot.svg' },
+    { id: 'ring', name: 'Anillo', file: 'crosshair-ring.svg' },
+    { id: 'chevron', name: 'Chevron', file: 'crosshair-chevron.svg' },
+  ];
   const ui = window.ArenaUI = {
+    crosshair: crosshairs.some(mira => mira.id === saved.crosshair) ? saved.crosshair : 'classic',
     skin: GameAssets.skins.some((skin) => skin.id === saved.skin) ? saved.skin : 'pulse',
     name: typeof saved.name === 'string' ? saved.name.slice(0, 16) : '',
     limiteKills: [5, 10, 20, 30].includes(saved.limiteKills) ? saved.limiteKills : 10,
@@ -113,6 +121,25 @@
   mute.checked = ui.muted;
   mute.addEventListener('change', () => { ui.muted = mute.checked; ui.save(); window.dispatchEvent(new Event('audio-settings')); });
   const dialog = document.getElementById('sound-dialog');
+  const crosshairPicker = document.getElementById('crosshair-picker');
+  function selectCrosshair(id) {
+    const mira = crosshairs.find(entry => entry.id === id);
+    ui.crosshair = mira.id;
+    document.documentElement.style.setProperty('--game-cursor', `url("/assets/${mira.file}") 16 16, crosshair`);
+    for (const button of crosshairPicker.children) button.setAttribute('aria-pressed', String(button.dataset.crosshair === id));
+    ui.save();
+  }
+  for (const mira of crosshairs) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.dataset.crosshair = mira.id;
+    const image = new Image(32, 32);
+    image.src = `/assets/${mira.file}`; image.alt = '';
+    const label = document.createElement('span'); label.textContent = mira.name;
+    button.append(image, label);
+    button.addEventListener('click', () => selectCrosshair(mira.id));
+    crosshairPicker.append(button);
+  }
+  selectCrosshair(ui.crosshair);
   document.querySelectorAll('.settings-trigger').forEach((button) => button.addEventListener('click', () => dialog.showModal()));
   window.lucide?.createIcons();
 })();

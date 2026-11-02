@@ -260,9 +260,21 @@ El botón de **abandonar partida** (icono de salida, junto al sonido) te devuelv
 
 El panel de **Configuración**, disponible desde el menú y durante la partida, incluye una guía de movimiento, combate, inventario, interacción, comunicación y controles táctiles. Es solo de consulta: no permite reasignar teclas. Los ajustes de sonido siguen disponibles en el mismo panel.
 
+### Red y estadísticas de ronda
+
+Durante la partida, el panel de red muestra el **ping de ida y vuelta al servidor**, el porcentaje y número de **sondas sin respuesta en 3 segundos** entre las últimas 30 completadas, y el tráfico aproximado de **subida/bajada en KB/s**. Envía una sonda por segundo mediante el transporte activo. Las mediciones se reinician al reconectar o cambiar la visibilidad de la pestaña para evitar pérdidas aparentes por suspensión del navegador.
+
+El panel aparece junto al marcador de jugadores: debajo en escritorio y móvil vertical, y a su lado en móvil horizontal. Los botones de configuración, salida y reacciones son semitransparentes para dejar ver el feed de eliminaciones; se resaltan al apuntarlos o enfocarlos.
+
+Las sondas perdidas o tardías **no equivalen a pérdida exacta de paquetes de Internet**: Socket.IO y WebSocket usan transportes fiables con retransmisiones. El tráfico mide mensajes de aplicación codificados como JSON UTF-8, sin cabeceras, compresión ni retransmisiones; **no mide tu velocidad máxima de Internet** ni hace pruebas de descarga externas.
+
+Al finalizar se muestran tus estadísticas autoritativas de la ronda: **daño efectivo a enemigos**, **precisión**, **impactos/proyectiles**, **vida recuperada**, **reanimaciones completadas** y **muertes**. El daño incluye escudo y vida, sin exceso sobre la salud restante ni autodaño. La precisión solo cuenta proyectiles de armas de fuego (cada perdigón de escopeta cuenta), no puños ni granadas; sin disparos se muestra «—». La curación cuenta la vida realmente recuperada con botiquines y charcos, no escudo, reapariciones ni reanimaciones. Los contadores se conservan al reaparecer o abandonar y volver a la misma ronda; se reinician en una nueva. Funciona con ambos tipos de sockets y no modifica las reglas de puntuación.
+
 ### Ordenador
 
 Sobre el área de juego, el puntero es una mira blanca con contorno oscuro. Su centro coincide con el punto de apuntado; los menús y botones conservan sus cursores normales. Funciona en Chrome y Firefox; si el navegador no carga la imagen, utiliza la mira estándar del sistema. Los controles táctiles no cambian.
+
+En **Configuración → Mira**, cada jugador puede elegir entre **Clásica, Cruz, Punto, Anillo y Chevron**, con vista previa. Se aplica inmediatamente y se guarda en el navegador; no modifica la precisión del arma ni la selección de otros jugadores. Todas usan imágenes de 32×32 y el mismo centro de apuntado.
 
 | Acción | Control |
 | :--- | :--- |

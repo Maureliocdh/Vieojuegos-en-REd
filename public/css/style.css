@@ -19,14 +19,12 @@ body {
   display: block;
   background: #222;
   touch-action: none;
-  cursor: url('/assets/crosshair.svg') 16 16, crosshair;
+  cursor: var(--game-cursor, url('/assets/crosshair.svg') 16 16, crosshair);
 }
 
 /* Marcador fijo sobre la cámara; no captura clics ni toques del juego. */
+#player-hud { position: fixed; top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); z-index: 30; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; pointer-events: none; }
 #scoreboard {
-  position: absolute;
-  top: 16px;
-  left: 16px;
   z-index: 30;
   min-width: 170px;
   padding: 10px 12px;
@@ -39,7 +37,17 @@ body {
 }
 
 #scoreboard:empty { display: none; }
-#quick-chat { position: fixed; right: max(116px, calc(116px + env(safe-area-inset-right))); top: max(16px, env(safe-area-inset-top)); z-index: 101; background: #112d28dd; }
+#network-panel { padding: 6px 8px; border-radius: 6px; background: #071b1670; color: #e2eee7; text-shadow: 0 1px 2px #000; font: 11px/1.5 sans-serif; pointer-events: none; }
+#network-panel span { display: block; }
+#network-panel[hidden], #match-statistics[hidden] { display: none; }
+body.mobile #player-hud { top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
+body.mobile #network-panel { font-size: 9px; max-width: 220px; }
+@media (max-height: 499px) { body.mobile #player-hud { flex-direction: row; } }
+#statistics-values { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+#statistics-values div { padding: 12px; background: #ffffff08; border: 1px solid #ffffff22; border-radius: 6px; }
+#statistics-values dt { color: #b8cbbf; font-size: 12px; }
+#statistics-values dd { margin: 6px 0 0; font-size: 22px; color: #dfff78; }
+#quick-chat { position: fixed; right: max(116px, calc(116px + env(safe-area-inset-right))); top: max(16px, env(safe-area-inset-top)); z-index: 101; background: #112d2838; }
 #quick-chat[hidden], #reaction-status[hidden] { display: none; }
 body.mobile #quick-chat { top: max(160px, calc(160px + env(safe-area-inset-top))); right: max(16px, env(safe-area-inset-right)); }
 #reaction-wheel { width: 250px; height: 250px; padding: 0; border: 2px solid #b7d98f; border-radius: 50%; background: #112d28f5; color: #fff; overflow: visible; }
@@ -204,6 +212,12 @@ select:focus-visible { outline: 3px solid var(--operator-color); outline-offset:
 #sound-dialog .mute-row { align-items: center; }
 #sound-dialog input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--acid); }
 #controls-guide { margin-top: 24px; padding-top: 8px; border-top: 1px solid #ffffff30; }
+#crosshair-settings { margin-top: 24px; padding-top: 8px; border-top: 1px solid #ffffff30; }
+#crosshair-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(85px, 1fr)); gap: 8px; }
+#crosshair-picker button { display: grid; justify-items: center; gap: 8px; margin: 0; padding: 10px 6px; border: 1px solid #ffffff40; border-radius: 6px; background: #10291f; color: #eff5ea; font: 12px 'Trebuchet MS', sans-serif; cursor: pointer; }
+#crosshair-picker button[aria-pressed=true] { border-color: var(--acid); background: #35533a; }
+#crosshair-picker button:focus-visible { outline: 3px solid var(--acid); outline-offset: 2px; }
+#crosshair-picker img { width: 32px; height: 32px; }
 .controls-note { color: #b8cbbf; font-size: 13px; line-height: 1.5; }
 .controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 16px; }
 .controls-grid section { min-width: 0; padding: 14px; border: 1px solid #ffffff22; border-radius: 6px; background: #10291f; }
@@ -214,9 +228,10 @@ select:focus-visible { outline: 3px solid var(--operator-color); outline-offset:
 .controls-grid dd:last-child { margin-bottom: 0; }
 .controls-grid kbd { display: inline-block; padding: 1px 5px; border: 1px solid #91b29d; border-bottom-width: 2px; border-radius: 4px; background: #284b40; color: #fff; font: inherit; }
 .controls-mobile { grid-column: 1 / -1; }
-#game-settings, #leave-match { position: fixed; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 101; background: #112d28dd; }
+#game-settings, #leave-match { position: fixed; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 101; background: #112d2838; }
+#game-settings, #leave-match, #quick-chat { opacity: .65; transition: opacity .15s, background-color .15s; }
+#game-settings:hover, #leave-match:hover, #quick-chat:hover, #game-settings:focus-visible, #leave-match:focus-visible, #quick-chat:focus-visible { opacity: 1; background: #112d2870; }
 #leave-match { right: max(66px, calc(66px + env(safe-area-inset-right))); color: #ffb4a9; border-color: #ffb4a980; }
-#leave-match:hover { background: #65372f; }
 #game-settings[hidden], #leave-match[hidden] { display: none; }
 #scoreboard { max-height: 225px; overflow: hidden; font-size: 12px; min-width: 135px; }
 @keyframes arrive { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
@@ -235,7 +250,7 @@ select:focus-visible { outline: 3px solid var(--operator-color); outline-offset:
   .loadout { grid-column: 1 / 3; max-width: none; margin-top: 14px; }
   .lobby-footer { margin-top: auto; font-size: 8px; gap: 8px; padding-top: 15px; }
 }
-body.mobile #scoreboard { top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); max-height: 74px; min-width: 98px; padding: 5px 8px; font-size: 10px; }
+body.mobile #scoreboard { max-height: 74px; min-width: 98px; padding: 5px 8px; font-size: 10px; }
 body.mobile #scoreboard.team-scoreboard .player-score { display: none; }
 body.mobile .joystick-zone { width: 110px; height: 110px; bottom: max(85px, calc(72px + env(safe-area-inset-bottom))); }
 body.mobile #move-zone { left: max(16px, env(safe-area-inset-left)); }

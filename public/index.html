@@ -99,13 +99,25 @@
         <p id="team-result" class="team-result" hidden role="status"></p>
         <section class="map-vote" aria-label="Votación del siguiente mapa" hidden></section>
         <div id="result-leaders"></div>
+        <section id="match-statistics" aria-labelledby="statistics-title" hidden>
+          <h2 id="statistics-title">Tus estadísticas</h2>
+          <dl id="statistics-values"></dl>
+          <p class="room-note">Daño efectivo a enemigos (vida y escudo). Precisión: proyectiles de armas de fuego acertados / lanzados; cada perdigón cuenta. Curación: vida recuperada con botiquines y charcos, sin reapariciones ni reanimaciones.</p>
+        </section>
         <h2>Clasificación completa</h2>
         <ul id="podio"></ul>
         <button id="return-home" type="button">Volver al inicio</button>
         <p class="room-note">Vota el siguiente mapa. Al terminar la encuesta comenzarás otra ronda automáticamente. Para salir, usa el botón de abandonar.</p>
       </div>
     </div>
-    <div id="scoreboard" aria-label="Marcador de eliminaciones"></div>
+    <div id="player-hud">
+      <div id="scoreboard" aria-label="Marcador de eliminaciones"></div>
+      <aside id="network-panel" aria-label="Estado de la red" hidden>
+        <span id="network-ping">Ping: —</span>
+        <span id="network-loss">Sondas sin respuesta: —</span>
+        <span id="network-traffic">Subida: — · Bajada: —</span>
+      </aside>
+    </div>
     <div id="respawn-message" aria-live="polite"></div>
     <canvas id="game"></canvas>
     <div id="match-countdown" hidden aria-live="polite"><p>¡DOMINA LA ARENA!</p><h2>Elimina a todos los que puedas</h2><strong id="countdown-number"></strong><span>El combate empieza para todos al terminar la cuenta.</span></div>
@@ -161,6 +173,11 @@
         <label for="volume-ambient">Ambiente <output id="value-ambient"></output></label><input id="volume-ambient" type="range" min="0" max="100" />
         <label class="mute-row" for="mute-audio"><span>Silenciar todo</span><input id="mute-audio" type="checkbox" /></label>
       </form>
+      <section id="crosshair-settings" aria-labelledby="crosshair-title">
+        <h3 id="crosshair-title">Mira</h3>
+        <p class="controls-note">Elige tu puntero para jugar con ratón. Se guarda en este navegador; no cambia los controles táctiles.</p>
+        <div id="crosshair-picker" role="group" aria-label="Seleccionar mira"></div>
+      </section>
       <section id="controls-guide" aria-labelledby="controls-title">
         <h3 id="controls-title">Controles</h3>
         <p class="controls-note">Solo consulta. Los controles no se pueden editar.</p>
@@ -198,6 +215,7 @@
     <script src="/js/lobby.js"></script>
     <script src="/js/world.js"></script>
     <script src="/js/weapon-audio.js"></script>
+    <script src="/js/network-metrics.js"></script>
     <script src="/js/game.js"></script>
     <script src="/js/tactical-ui.js"></script>
     <script src="/js/training-map.js"></script>

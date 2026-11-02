@@ -56,6 +56,68 @@ function revivalGame() {
   return result;
 }
 
+test('Red: sonda disponible fuera de partida y solo devuelve secuencia validada', () => {
+  const { game } = loadGame();
+  const replies = [], client = { emit: (type, data) => replies.push({ type, data }) };
+  game.processClientMessage('a', { type: 'sondaRed', data: { seq: 42, extra: 'no' } }, client);
+  assert.equal(replies[0].type, 'respuestaRed');
+  assert.equal(replies[0].data.seq, 42);
+  assert.equal(Object.keys(replies[0].data).length, 1);
+  for (const seq of [NaN, -1, {}, '42', Infinity]) game.processClientMessage('a', { type: 'sondaRed', data: { seq } }, client);
+  assert.equal(replies.length, 1);
+});
+
+test('Estadísticas: daño efectivo, precisión por proyectil, curación real y resultado congelado', () => {
+  const { game, tick, advance, messages } = revivalGame();
+  const a = game.jugadores.a, target = game.jugadores.c;
+  Object.assign(a, { x: 1000, y: 1000 });
+  Object.assign(target, { x: 1080, y: 1000, vida: 5, escudo: 5 });
+  game.jugadores.d.x = 4000; game.jugadores.b.x = 4000;
+  game.createBullet('a', { x: a.x, y: a.y, angle: 0 });
+  game.createBullet('a', { x: a.x, y: a.y, angle: 0 });
+  tick();
+  assert.equal(a.estadisticas.proyectiles, 1);
+  assert.equal(a.estadisticas.impactos, 1);
+  assert.equal(a.estadisticas.daño, 10);
+  assert.equal(target.abatido, true);
+  a.vida = 90; a.inventario[2] = 'botiquin'; a.slotSeleccionado = 2;
+  game.createBullet('a', { x: a.x, y: a.y, angle: 0 });
+  assert.equal(a.estadisticas.curacion, 10);
+  assert.equal(a.estadisticas.proyectiles, 1);
+  require('../public/js/zones').zones.splice(0, 0, { tipo: 'curacion', x: a.x, y: a.y, radio: 10 });
+  a.vida = 99.9;
+  game.aplicarZonasEspeciales();
+  assert.ok(Math.abs(a.estadisticas.curacion - 10.1) < 1e-8);
+  require('../public/js/zones').zones.length = 0;
+  game.respawn(a);
+  advance(3000); game.procesarRespawns();
+  assert.equal(a.estadisticas.daño, 10);
+  game.finalizarPartida();
+  const result = messages.find(message => message.type === 'finDeJuego').data.find(player => player.id === 'a');
+  assert.equal(result.estadisticas.daño, 10);
+  assert.equal(game.jugadores.a.estadisticas.daño, 0);
+  assert.equal(result.estadisticas.proyectiles, 1);
+});
+
+test('Estadísticas: reanimación suma solo al completarse y muerte cuenta una vez', () => {
+  const { game, advance } = revivalGame();
+  const a = game.jugadores.a, b = game.jugadores.b;
+  game.resolverBaja(b, game.jugadores.c, 'rifle');
+  game.reanimar('a', { activo: true }); game.procesarAbatidos();
+  assert.equal(a.estadisticas.reanimaciones, 0);
+  for (let i = 0; i < 30; i++) {
+    advance(100); game.reanimar('a', { activo: true }); game.procesarAbatidos();
+  }
+  assert.equal(a.estadisticas.reanimaciones, 1);
+  assert.equal(b.vida, 25);
+  game.procesarAbatidos();
+  assert.equal(a.estadisticas.reanimaciones, 1);
+  game.resolverBaja(b, game.jugadores.c, 'rifle');
+  assert.equal(b.estadisticas.muertes, 0);
+  game.resolverBaja(b, game.jugadores.c, 'rifle');
+  assert.equal(b.estadisticas.muertes, 1);
+});
+
 test('Chat rápido: cuatro reacciones autoritativas, duración y límite de frecuencia', () => {
   const { game, advance, now } = revivalGame();
   const replies = [], client = { emit: (type, data) => replies.push({ type, data }) };

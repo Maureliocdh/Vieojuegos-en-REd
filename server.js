@@ -45,6 +45,11 @@ const MUNICION_CAJA = { pistola: 24, rifle: 30, sniper: 5, escopeta: 12 };
 const nuevasReservas = () => ({ pistola: 0, rifle: 0, sniper: 0, escopeta: 0 });
 const cofres = [];
 const rarezaAleatoria = () => { const valor = Math.random(); return valor < 0.65 ? 0 : valor < 0.9 ? 1 : 2; };
+const nuevasEstadisticas = () => ({ daño: 0, proyectiles: 0, impactos: 0, curacion: 0, reanimaciones: 0, muertes: 0 });
+function registrarDaño(autor, objetivo, cantidad) {
+  if (!autor || autor === objetivo || (esDueloEquipos() && Teams.same(autor, objetivo))) return;
+  autor.estadisticas.daño += Math.min(cantidad, Math.max(0, objetivo.vida) + Math.max(0, objetivo.escudo));
+}
 function equipoInicial(jugador) {
   jugador.reaccion = null;
   jugador.reaccionHasta = 0;
@@ -236,6 +241,7 @@ function limpiarAbatido(jugador) {
   jugador.reanimarHasta = 0;
 }
 function eliminarJugador(jugador, autor = null, arma = null) {
+  jugador.estadisticas.muertes += 1;
   const responsable = autor || jugadores[jugador.autorAbatidoId];
   if (registrarBaja(responsable, jugador, arma || jugador.armaAbatido)) return true;
   respawn(jugador, responsable);
@@ -302,6 +308,7 @@ function procesarAbatidos() {
     if (jugador.progresoReanimacion >= 1) {
       limpiarAbatido(jugador);
       jugador.vida = 25; jugador.escudo = 0;
+      rescata[1].estadisticas.reanimaciones += 1;
       rescata[1].reanimando = null;
     }
   }
@@ -363,6 +370,7 @@ function iniciarDesdeSala(id) {
     jugador.vida = 100;
     jugador.escudo = 0;
     jugador.kills = 0;
+    jugador.estadisticas = nuevasEstadisticas();
     equipoInicial(jugador);
     Object.assign(jugador, obtenerPosicionSpawn());
   }
@@ -498,7 +506,7 @@ function finalizarPartida() {
     .filter(([, jugador]) => jugador.unido)
     .sort(([, first], [, second]) => (second.kills || 0) - (first.kills || 0))
     .map(([id, jugador]) => ({ id, nombre: jugador.nombre, skin: jugador.skin, esBot: jugador.esBot,
-      equipo: jugador.equipo ?? null, kills: jugador.kills || 0 }));
+      equipo: jugador.equipo ?? null, kills: jugador.kills || 0, estadisticas: { ...jugador.estadisticas } }));
   broadcast('finDeJuego', podio);
 
   votacionMapa = new MapVote(podio.filter(jugador => !jugador.esBot).map(jugador => jugador.id), mapaActual, Date.now());
@@ -514,6 +522,7 @@ function reiniciarMundo() {
       jugador.vida = 100;
       jugador.escudo = 0;
       jugador.kills = 0;
+      jugador.estadisticas = nuevasEstadisticas();
       jugador.muerto = false;
       limpiarAbatido(jugador);
       jugador.recargando = false;
@@ -735,6 +744,7 @@ function addPlayer(id) {
     vida: 100,
     escudo: 0,
     kills: 0,
+    estadisticas: nuevasEstadisticas(),
     inventario: Array(INVENTARIO_SIZE).fill(null),
     slotSeleccionado: 0,
     ultimoDisparo: 0,
@@ -774,6 +784,7 @@ function generarBot(id) {
     municionPorSlot: mun,
     reservas: { ...nuevasReservas(), pistola: 24 },
     kills: 0,
+    estadisticas: nuevasEstadisticas(),
     esBot: true,
     nombre: `BOT_${id}`,
     unido: true,
@@ -863,7 +874,11 @@ function createBullet(id, { x, y, angle } = {}) {
     // No se consume si el stat correspondiente ya está al máximo.
     if (stats.cura_vida && jugador.vida >= 100) return;
     if (stats.cura_escudo && jugador.escudo >= 100) return;
-    if (stats.cura_vida) jugador.vida = Math.min(100, jugador.vida + stats.cura_vida);
+    if (stats.cura_vida) {
+      const curacion = Math.min(100 - jugador.vida, stats.cura_vida);
+      jugador.vida += curacion;
+      jugador.estadisticas.curacion += curacion;
+    }
     if (stats.cura_escudo) jugador.escudo = Math.min(100, jugador.escudo + stats.cura_escudo);
     jugador.inventario[jugador.slotSeleccionado] = null;
     jugador.municionPorSlot[jugador.slotSeleccionado] = null;
@@ -877,6 +892,7 @@ function createBullet(id, { x, y, angle } = {}) {
   if (ahora - jugador.ultimoDisparo < stats.cooldown) return;
   jugador.ultimoDisparo = ahora;
   jugador.ultimoDisparoArma = nombreArma;
+  if (stats.capacidadCargador > 0) jugador.estadisticas.proyectiles += stats.balas;
   if (stats.capacidadCargador > 0) {
     jugador.balasEnCargador -= 1;
     jugador.municionPorSlot[jugador.slotSeleccionado] = jugador.balasEnCargador;
@@ -1035,6 +1051,12 @@ function enviarReaccion(id, data, client) {
 
 function processClientMessage(id, message, client = null) {
   if (!message || typeof message !== 'object') return;
+  if (message.type === 'sondaRed') {
+    if (client && Number.isSafeInteger(message.data?.seq) && message.data.seq >= 0) {
+      sendToClient(client, 'respuestaRed', { seq: message.data.seq });
+    }
+    return;
+  }
   if (message.type === 'votarMapa') {
     actualizarVotacionMapa();
     const error = votacionMapa ? votacionMapa.vote(id, message.data?.mapa, Date.now()) : 'No hay una votación disponible.';
@@ -1106,7 +1128,7 @@ if (nativeMode) {
     sendToClient(socket, 'configPartida', reglasPartida());
     sendToClient(socket, 'estadoSala', estadoSala());
 
-    for (const type of ['votarMapa', 'abandonarPartida', 'moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada', 'reanimar', 'reaccion']) {
+    for (const type of ['sondaRed', 'votarMapa', 'abandonarPartida', 'moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada', 'reanimar', 'reaccion']) {
       socket.on(type, (data) => processClientMessage(id, { type, data }, socket));
     }
     socket.on('disconnect', () => removePlayer(id));
@@ -1338,6 +1360,7 @@ function procesarGranadas() {
       const dist = Math.hypot(jugador.x - g.x, jugador.y - g.y);
       if (dist > GRANADA_RADIO_EXPLOSION) continue;
       const daño = Math.round(GRANADA_DAÑO * (1 - dist / GRANADA_RADIO_EXPLOSION));
+      registrarDaño(jugadores[g.lanzadorId], jugador, daño);
       const dañoEscudo = Math.min(jugador.escudo, daño);
       jugador.escudo -= dañoEscudo;
       jugador.vida -= daño - dañoEscudo;
@@ -1388,7 +1411,9 @@ function aplicarZonasEspeciales() {
     jugador.vida = Math.max(0, jugador.vida - effects.damagePerSecond / TICK_RATE);
     if (jugador.vida <= 0) { if (resolverBaja(jugador)) return; continue; }
     if (jugador.abatido) continue;
-    jugador.vida = Math.min(100, jugador.vida + effects.healPerSecond / TICK_RATE);
+    const curacion = Math.min(100 - jugador.vida, effects.healPerSecond / TICK_RATE);
+    jugador.vida += curacion;
+    jugador.estadisticas.curacion += curacion;
     jugador.escudo = Math.min(100, jugador.escudo + effects.shieldPerSecond / TICK_RATE);
   }
 }
@@ -1440,6 +1465,9 @@ setInterval(() => {
       if (Math.hypot(bala.x - jugador.x, bala.y - jugador.y) <= HIT_RADIUS) {
         balas.splice(index, 1);
         // El escudo absorbe primero el daño; solo el excedente llega a la vida.
+        const propietario = jugadores[propietarioId];
+        registrarDaño(propietario, jugador, bala.daño);
+        if (propietario && STATS_ARMAS[bala.arma]?.capacidadCargador > 0) propietario.estadisticas.impactos += 1;
         const dañoAlEscudo = Math.min(jugador.escudo, bala.daño);
         jugador.escudo -= dañoAlEscudo;
         const dañoRestante = bala.daño - dañoAlEscudo;

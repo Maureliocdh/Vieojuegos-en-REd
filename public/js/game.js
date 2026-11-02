@@ -10,6 +10,9 @@ const nicknameInput = document.getElementById('nickname');
 const playButton = document.getElementById('jugar-button');
 const singlePlayerButton = document.getElementById('singleplayer-button');
 const podiumList = document.getElementById('podio');
+const networkMetrics = new NetworkMetrics();
+const networkPanel = document.getElementById('network-panel');
+networkPanel.title = 'Ping de ida y vuelta al servidor. Sondas sin respuesta en 3 s (últimas 30), no pérdida exacta de paquetes TCP. Tráfico aproximado de mensajes del juego, sin cabeceras ni retransmisiones; no es la velocidad de Internet.';
 // Adaptador: el resto del juego llama a network.send/on sin conocer el transporte.
 const network = {
   id: null,
@@ -19,6 +22,7 @@ const network = {
     this.handlers.set(type, handler);
   },
   receive(type, data) {
+    networkMetrics.count('down', type, data);
     this.handlers.get(type)?.(data);
   },
 };
@@ -547,6 +551,26 @@ network.on('finDeJuego', (podio) => {
   actualizarCuentaInicio();
   podiumList.replaceChildren();
   const ownTeam = podio.find(jugador => jugador.id === network.id)?.equipo;
+  const ownStatistics = podio.find(jugador => jugador.id === network.id)?.estadisticas;
+  const statistics = document.getElementById('match-statistics');
+  statistics.hidden = !ownStatistics;
+  const statisticsValues = document.getElementById('statistics-values');
+  statisticsValues.replaceChildren();
+  if (ownStatistics) {
+    const accuracy = ownStatistics.proyectiles
+      ? `${(100 * ownStatistics.impactos / ownStatistics.proyectiles).toFixed(1)} %` : '—';
+    for (const [label, value] of [
+      ['Daño causado', Math.round(ownStatistics.daño)], ['Precisión', accuracy],
+      ['Impactos / proyectiles', `${ownStatistics.impactos} / ${ownStatistics.proyectiles}`],
+      ['Vida recuperada', Math.round(ownStatistics.curacion)], ['Reanimaciones', ownStatistics.reanimaciones],
+      ['Muertes', ownStatistics.muertes],
+    ]) {
+      const cell = document.createElement('div');
+      const title = document.createElement('dt'); title.textContent = label;
+      const number = document.createElement('dd'); number.textContent = value;
+      cell.append(title, number); statisticsValues.append(cell);
+    }
+  }
   const teamResult = document.getElementById('team-result');
   teamResult.hidden = !currentTeams;
   delete teamResult.dataset.equipo;
@@ -763,14 +787,18 @@ async function connectNetwork() {
     if (modo === 'socket.io') {
       await loadSocketIoClient();
       const socket = window.io();
-      network.send = (type, data) => socket.emit(type, data);
+      network.send = (type, data) => {
+        if (!socket.connected) return;
+        networkMetrics.count('up', type, data);
+        socket.emit(type, data);
+      };
       socket.on('connect', () => { network.id = socket.id; setConnectionState(true); });
       socket.on('disconnect', () => setConnectionState(false));
       socket.on('connect_error', () => setConnectionState(false));
       for (const type of [
         'estadoSala', 'configMapa', 'estadoJuego', 'jugadorDesconectado', 'inicioPartida',
         'tiempoPartida', 'finDeJuego', 'reinicioPartida', 'kill', 'explosion', 'zonaActualizada',
-        'configPartida', 'entradaRechazada', 'salidaPartida', 'estadoVotacion', 'votoRechazado', 'reaccionRechazada',
+        'configPartida', 'entradaRechazada', 'salidaPartida', 'estadoVotacion', 'votoRechazado', 'reaccionRechazada', 'respuestaRed',
       ]) {
         socket.on(type, (data) => network.receive(type, data));
       }
@@ -778,7 +806,10 @@ async function connectNetwork() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const socket = new WebSocket(`${protocol}//${window.location.host}`);
       network.send = (type, data) => {
-        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type, data }));
+        if (socket.readyState === WebSocket.OPEN) {
+          networkMetrics.count('up', type, data);
+          socket.send(JSON.stringify({ type, data }));
+        }
       };
       socket.addEventListener('open', () => setConnectionState(true));
       socket.addEventListener('close', () => { setConnectionState(false); setTimeout(connectNetwork, 1500); });
@@ -800,10 +831,30 @@ async function connectNetwork() {
   }
 }
 
+network.on('respuestaRed', ({ seq }) => networkMetrics.reply(seq, performance.now()));
+function renderNetworkMetrics() {
+  const metrics = networkMetrics.sample(performance.now());
+  document.getElementById('network-ping').textContent = !networkReady ? 'Sin conexión'
+    : document.hidden ? 'Medición pausada' : `Ping: ${metrics.ping === null ? '—' : Math.round(metrics.ping) + ' ms'}`;
+  document.getElementById('network-loss').textContent = `Sondas sin respuesta: ${metrics.total
+    ? `${(100 * metrics.lost / metrics.total).toFixed(0)} % (${metrics.lost}/${metrics.total})` : '—'}`;
+  const rate = value => value === null ? '—' : `${value.toFixed(1)} KB/s`;
+  document.getElementById('network-traffic').textContent = `Subida: ${rate(metrics.upload)} · Bajada: ${rate(metrics.download)}`;
+}
+setInterval(() => {
+  if (networkReady && !document.hidden) network.send('sondaRed', networkMetrics.probe(performance.now()));
+  renderNetworkMetrics();
+}, 1000);
+document.addEventListener('visibilitychange', () => {
+  networkMetrics.reset(performance.now());
+  renderNetworkMetrics();
+});
 connectNetwork();
 
 function setConnectionState(ready) {
   networkReady = ready;
+  networkMetrics.reset(performance.now());
+  renderNetworkMetrics();
   playButton.disabled = !ready || gameFinished || soloModeLocked;
   singlePlayerButton.disabled = !ready || gameFinished || soloModeLocked;
   document.getElementById('connection-status').textContent = ready ? 'Arena disponible' : 'Sin conexión. Reconectando...';
@@ -823,6 +874,7 @@ function setConnectionState(ready) {
 }
 
 function setGameVisibility(visible) {
+  networkPanel.hidden = !visible;
   document.getElementById('quick-chat').hidden = !visible;
   if (!visible) {
     document.getElementById('reaction-wheel').close();

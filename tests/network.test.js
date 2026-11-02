@@ -56,6 +56,8 @@ for (const native of [false, true]) {
     const host = connect(url, native), guest = connect(url, native), spectator = connect(url, native);
     context.after(() => { host.close(); guest.close(); spectator.close(); });
     await Promise.all([host.wait('configMapa'), guest.wait('configMapa'), spectator.wait('configMapa')]);
+    host.send('sondaRed', { seq: 19 });
+    assert.deepEqual(await host.wait('respuestaRed'), { seq: 19 });
     host.send('unirse', { nombre: 'Host', mapa: 'orbital', duracion: 60, cantidadBots: 0, modoArena: 'equipos' });
     const room = await host.wait('estadoSala', state => state.jugadores.length === 1);
     const guestRoom = guest.wait('estadoSala', state => state.jugadores.length === 2);
@@ -67,7 +69,10 @@ for (const native of [false, true]) {
     const map = await guest.wait('configMapa', state => state.mapa === 'orbital');
     assert.ok(map.obstaculos.some(object => object.tipo === 'contenedor'));
     assert.equal((await guest.wait('configPartida', state => state.activa)).mapa, 'orbital');
-    await host.wait('finDeJuego', () => true, 75000);
+    const final = await host.wait('finDeJuego', () => true, 75000);
+    for (const player of final) {
+      assert.deepEqual(player.estadisticas, { daño: 0, proyectiles: 0, impactos: 0, curacion: 0, reanimaciones: 0, muertes: 0 });
+    }
     const vote = await host.wait('estadoVotacion', state => state.activa);
     assert.equal(vote.segundos, 15);
     assert.equal(vote.electores.length, 2);

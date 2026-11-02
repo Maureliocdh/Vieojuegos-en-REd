@@ -283,12 +283,18 @@ En duelo por equipos la primera derrota deja al jugador `abatido`, con un plazo 
 | Cliente → servidor | `moverEntrenamiento`, `comprarEquipo` | Preparación táctica. |
 | Cliente → servidor | `abandonarPartida` | Regresar al menú manteniendo la conexión. |
 | Cliente → servidor | `votarMapa` | Elegir el mapa para la siguiente sala, si se tiene permiso. |
+| Cliente → servidor | `sondaRed` | Enviar una secuencia para medir RTT de aplicación. |
+| Servidor → cliente | `respuestaRed` | Devolver la secuencia validada, sin aceptar tiempos del cliente. |
 | Servidor → cliente | `configMapa`, `configPartida`, `estadoSala` | Configuración y participantes. |
 | Servidor → cliente | `inicioPartida`, `estadoJuego`, `tiempoPartida` | Inicio, snapshots y reloj. |
 | Servidor → cliente | `kill`, `explosion`, `zonaActualizada` | Notificaciones y cambios del mundo. |
 | Servidor → cliente | `entradaRechazada`, `salidaPartida` | Resultado de admisión o salida. |
 | Servidor → cliente | `finDeJuego`, `reinicioPartida` | Resultados y nueva ronda. |
 | Servidor → cliente | `estadoVotacion`, `votoRechazado` | Tiempo, recuento y ganador de la encuesta, o motivo del rechazo. |
+
+El panel de red calcula el RTT con el reloj monotónico del navegador. Una sonda por segundo queda pendiente como máximo tres segundos; el porcentaje usa las últimas treinta sondas completadas o vencidas. No mide la pérdida de paquetes TCP: las retransmisiones pueden aparecer como latencia o respuestas tardías. La subida y bajada son una estimación del volumen de mensajes JSON UTF-8 por segundo, no de la capacidad máxima de Internet. Ocultar la pestaña pausa las sondas y reinicia la muestra al volver.
+
+Cada entrada del array de `finDeJuego` incluye `estadisticas`, calculadas por el servidor: daño efectivo, proyectiles, impactos, vida recuperada, reanimaciones y muertes. El resultado copia los contadores antes de reiniciar el mundo; reaparecer no los borra. La precisión se obtiene de impactos/proyectiles de armas de fuego, contando cada perdigón y excluyendo granadas y puños. El cliente solo presenta estos datos, no decide los totales.
 
 ## 9. Simulación, sincronización y límites reales
 
@@ -473,7 +479,7 @@ Actualmente no hay recuperación persistente de identidad. El permiso de regreso
 Se cancela la ronda, se limpia el mundo y se borran los permisos de regreso.
 
 **40. ¿Qué es un heartbeat?**  
-Un intercambio periódico para detectar conexiones que dejaron de responder. Engine.IO lo gestiona; el modo nativo no configura un ciclo propio equivalente, aunque WebSocket disponga de ping/pong.
+Un intercambio periódico para detectar conexiones que dejaron de responder. Engine.IO lo gestiona; el modo nativo no configura un ciclo propio equivalente de ping/pong del protocolo. Ambos modos tienen además las sondas de aplicación `sondaRed`/`respuestaRed` para el panel de latencia; estas no cierran conexiones ni sustituyen el heartbeat de transporte.
 
 **41. ¿Se pueden conectar cientos de jugadores directamente?**  
 No hay una capacidad medida que permita afirmarlo. Se transmite bastante estado a cada cliente y se simulan entidades en un proceso. Hay que realizar pruebas de carga antes de fijar un máximo.

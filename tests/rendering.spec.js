@@ -1,5 +1,42 @@
 const { test, expect } = require('@playwright/test');
 
+test('Miras: cinco estilos, selección local, persistencia y centro constante', async ({ page, context }) => {
+  await page.goto('/');
+  await expect(page.locator('#jugar-button')).toBeEnabled();
+  const guest = await context.newPage();
+  await guest.goto('/');
+  await expect(guest.locator('#jugar-button')).toBeEnabled();
+  await page.locator('.lobby-header .settings-trigger').click();
+  await expect(page.locator('#crosshair-picker button')).toHaveCount(5);
+  for (const id of ['classic', 'cross', 'dot', 'ring', 'chevron']) {
+    const button = page.locator(`[data-crosshair=${id}]`);
+    await button.click();
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#crosshair-picker [aria-pressed=true]')).toHaveCount(1);
+    const preview = await button.locator('img').evaluate(async image => {
+      await image.decode();
+      return { file: image.getAttribute('src'), width: image.naturalWidth, height: image.naturalHeight };
+    });
+    expect(preview.width).toBe(32); expect(preview.height).toBe(32);
+    const cursor = await page.locator('#game').evaluate(element => getComputedStyle(element).cursor);
+    expect(cursor).toContain(`${preview.file}`);
+    expect(cursor).toMatch(/16 16, crosshair$/);
+  }
+  expect(await guest.evaluate(() => ArenaUI.crosshair)).toBe('classic');
+  await page.reload();
+  await page.locator('.lobby-header .settings-trigger').click();
+  await expect(page.locator('[data-crosshair=chevron]')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem('outpost-settings'));
+    saved.crosshair = 'invalid';
+    localStorage.setItem('outpost-settings', JSON.stringify(saved));
+  });
+  await page.reload();
+  expect(await page.evaluate(() => ArenaUI.crosshair)).toBe('classic');
+  await guest.close();
+});
+
 test('Mira centrada en el canvas sin cambiar cursores de menús ni coordenadas de apuntado', async ({ page }) => {
   const response = await page.request.get('/assets/crosshair.svg');
   expect(response.ok()).toBe(true);
