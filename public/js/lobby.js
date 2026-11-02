@@ -28,10 +28,10 @@
   };
   window.selectArenaMap(ui.mapa);
   document.getElementById('match-map').addEventListener('change', event => window.selectArenaMap(event.target.value, true));
-  ui.modo = ['clasico', 'puzzles', 'solo'].includes(saved.modo) ? saved.modo : 'clasico';
+  ui.modo = ['clasico', 'puzzles', 'equipos', 'solo'].includes(saved.modo) ? saved.modo : 'clasico';
   const tabs = [...document.querySelectorAll('[data-mode]')];
   window.selectArenaMode = (mode, persist = true) => {
-    if (!['clasico', 'puzzles', 'solo'].includes(mode)) mode = 'clasico';
+    if (!['clasico', 'puzzles', 'equipos', 'solo'].includes(mode)) mode = 'clasico';
     ui.modo = mode;
     for (const tab of tabs) {
       const selected = tab.dataset.mode === mode;
@@ -42,8 +42,10 @@
     document.getElementById('mode-description').textContent = {
       clasico: 'Combate directo con reapariciones. Reúne a tus amigos y domina la arena.',
       puzzles: '60 s de balizas → 20 s de compras → combate. Gana créditos y elige tu equipo inicial.',
+      equipos: 'Azul contra Rojo. Humanos y bots equilibrados, sin fuego amigo. Gana el equipo que alcance las bajas objetivo; al terminar el tiempo, gana quien tenga más.',
       solo: 'Arena clásica contra bots. La sala no admite otros jugadores; puedes elegir cuántos bots participan.',
     }[mode];
+    document.querySelector('.match-tag').firstChild.textContent = mode === 'equipos' ? 'DUELO POR EQUIPOS ' : 'TODOS CONTRA TODOS ';
     if (persist) ui.save();
   };
   tabs.forEach((tab, index) => {

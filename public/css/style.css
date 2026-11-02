@@ -19,6 +19,7 @@ body {
   display: block;
   background: #222;
   touch-action: none;
+  cursor: url('/assets/crosshair.svg') 16 16, crosshair;
 }
 
 /* Marcador fijo sobre la cámara; no captura clics ni toques del juego. */
@@ -208,6 +209,7 @@ select:focus-visible { outline: 3px solid var(--operator-color); outline-offset:
   .lobby-footer { margin-top: auto; font-size: 8px; gap: 8px; padding-top: 15px; }
 }
 body.mobile #scoreboard { top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); max-height: 74px; min-width: 98px; padding: 5px 8px; font-size: 10px; }
+body.mobile #scoreboard.team-scoreboard .player-score { display: none; }
 body.mobile .joystick-zone { width: 110px; height: 110px; bottom: max(85px, calc(72px + env(safe-area-inset-bottom))); }
 body.mobile #move-zone { left: max(16px, env(safe-area-inset-left)); }
 body.mobile #aim-zone { right: max(16px, env(safe-area-inset-right)); }
@@ -250,10 +252,17 @@ body.mobile #respawn-message { font-size: 18px; padding: 12px; width: 240px; }
 #match-countdown h2 { font-size: clamp(22px,4vw,40px); margin: 0; }
 #countdown-number { font-size: clamp(35px,9vw,100px); color: #dfff78; }
 #match-countdown span { font-size: 13px; color: #abc6b9; }
-.panel-inicio .arena-tabs { display: flex; border-bottom: 1px solid #dfff7850; gap: 4px; margin-bottom: 0; }
+.panel-inicio .arena-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid #dfff7850; gap: 4px; margin-bottom: 0; }
 .panel-inicio .arena-tabs button, .panel-inicio .arena-tabs #singleplayer-button { flex: 1; width: auto; min-width: 0; margin: 0; padding: 12px 6px; border: 1px solid #ffffff25; border-bottom: 0; border-radius: 8px 8px 0 0; background: #ffffff08; color: #aac3b5; font-size: 13px; }
 .panel-inicio .arena-tabs button[aria-selected=true], .panel-inicio .arena-tabs #singleplayer-button[aria-selected=true] { background: #dfff781a; color: #dfff78; border-color: #dfff7870; }
 .arena-tabs button:focus-visible { outline: 2px solid #dfff78; outline-offset: 2px; }
+.panel-inicio .arena-tabs #tab-equipos { flex-basis: 110px; }
+[data-equipo=azul] { --team-color: #62bdff; }
+[data-equipo=rojo] { --team-color: #ff7979; }
+#room-players li[data-equipo], #result-leaders article[data-equipo] { border-color: var(--team-color); }
+#room-players li[data-equipo] span, #podio li[data-equipo], #scoreboard [data-equipo] { color: var(--team-color); }
+.team-result { border: 1px solid #b6cddd; border-radius: 8px; padding: 14px; font-weight: bold; color: var(--team-color, #edf5eb); }
+.team-score { font-weight: bold; }
 #mode-description { color: #adc5b7; font-size: 12px; min-height: 46px; line-height: 1.5; margin: 0 0 16px; padding: 12px; background: #ffffff05; }
 .panel-inicio .start-actions { grid-template-columns: 1fr; }
 #tactical-screen { position: fixed; inset: 0; z-index: 95; overflow: auto; background: linear-gradient(120deg,#0b201dfc,#173c32fc); padding: 24px; display: grid; place-items: center; color: #edf5eb; font-family: 'Trebuchet MS',sans-serif; }

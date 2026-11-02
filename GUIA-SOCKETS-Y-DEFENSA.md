@@ -78,6 +78,7 @@ Navegador
 | [public/js/lobby.js](./public/js/lobby.js) | Preferencias del menú, personaje, reglas y ajustes de sonido. |
 | [lib/tactical.js](./lib/tactical.js) | Fases de preparación, balizas, créditos y compras. |
 | [public/js/maps.js](./public/js/maps.js) | Catálogo y geometría de Isla Outpost y Estación Orbital, compartidos entre transportes. |
+| [public/js/teams.js](./public/js/teams.js) | Balance de humanos y bots entre Azul y Rojo y reglas compartidas para identificar compañeros. El servidor asigna los equipos y cuenta bajas colectivas; no acepta el equipo elegido por un cliente. |
 | [lib/map-vote.js](./lib/map-vote.js) | Votación autoritativa del siguiente mapa durante 15 segundos. |
 | [lib/navigation.js](./lib/navigation.js) | Rutas de bots por el suelo transitable de la estación, considerando las compuertas como pasos que pueden abrir. |
 | [public/js/buildings.js](./public/js/buildings.js) | Geometría y reglas relacionadas con edificios y ocultación. |
@@ -265,6 +266,12 @@ Esto separa **transporte** de **lógica de juego** y reduce la posibilidad de te
 9. Los clientes envían acciones y el servidor publica el estado común.
 10. Al alcanzar el límite de bajas o agotarse el tiempo, se publica `finDeJuego`, se reinicia el mundo y se abre una encuesta de 15 segundos para los humanos que terminaron la ronda.
 11. El servidor cuenta un voto modificable por conexión durante 15 segundos. Gana la mayoría; en empate o abstención conserva el mapa actual. Al cerrar la encuesta inicia automáticamente otra ronda en el mapa ganador con los participantes conectados que no hayan abandonado. Conserva reglas y personajes, reinicia equipo y bajas y repite la preparación de la modalidad. No incorpora espectadores ni inicia partidas sin humanos.
+
+En **Duelo por equipos**, `estadoSala` anuncia los equipos provisionales; `configPartida` y `estadoJuego` replican el marcador autoritativo en `equipos`. Los proyectiles conservan su equipo de origen para impedir fuego amigo incluso si su propietario se desconecta. Las bajas colectivas no se deducen sumando jugadores presentes, porque se perderían puntos cuando alguien saliera. La siguiente ronda equilibra de nuevo a los participantes y reinicia el marcador.
+
+Los charcos de vida y escudo viajan con sus vértices en `configMapa`. El mismo test de pertenencia al polígono sirve al servidor y al cliente, pero solo el servidor modifica salud y escudo, a 10 puntos por segundo y con límite de 100. El cliente dibuja el charco y el estado recibido: no envía mensajes para concederse curación.
+
+En duelo por equipos la primera derrota deja al jugador `abatido`, con un plazo de 20 segundos y sin conceder una baja todavía. Para rescatarlo, el cliente envía `reanimar: {activo: true}` mientras se mantiene la interacción, y `{activo: false}` al soltar. Ambos transportes pasan por el mismo despachador. El servidor comprueba equipo, distancia, línea libre, continuidad de los mensajes y tres segundos reales transcurridos; el cliente no decide la salud ni el progreso. Una concesión de entrada de 350 ms tolera pequeños retrasos pero cancela si se corta la conexión. `estadoJuego` replica el abatimiento y el progreso. Reanimar devuelve exactamente 25 de vida y cero escudo; rematar, desangrarse o quedar todo el equipo abatido conduce a la muerte y reaparición normales.
 
 ### Eventos que conviene memorizar
 

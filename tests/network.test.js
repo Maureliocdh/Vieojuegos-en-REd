@@ -56,7 +56,7 @@ for (const native of [false, true]) {
     const host = connect(url, native), guest = connect(url, native), spectator = connect(url, native);
     context.after(() => { host.close(); guest.close(); spectator.close(); });
     await Promise.all([host.wait('configMapa'), guest.wait('configMapa'), spectator.wait('configMapa')]);
-    host.send('unirse', { nombre: 'Host', mapa: 'orbital', duracion: 60, cantidadBots: 0 });
+    host.send('unirse', { nombre: 'Host', mapa: 'orbital', duracion: 60, cantidadBots: 0, modoArena: 'equipos' });
     const room = await host.wait('estadoSala', state => state.jugadores.length === 1);
     const guestRoom = guest.wait('estadoSala', state => state.jugadores.length === 2);
     guest.send('unirse', { nombre: 'Guest', mapa: 'outpost' });
@@ -88,6 +88,7 @@ for (const native of [false, true]) {
     await Promise.all([host.wait('inicioPartida'), guest.wait('inicioPartida')]);
     const next = await host.wait('estadoSala', state => state.activa && state.reglas.mapa === 'outpost');
     assert.equal(next.reglas.mapa, 'outpost');
+    assert.equal(next.reglas.modoArena, 'equipos');
     assert.equal(next.anfitrionId, room.anfitrionId);
     assert.deepEqual(next.jugadores.map(player => player.id).sort(), [room.anfitrionId, guestId].sort());
     assert.equal((await host.wait('configMapa')).mapa, 'outpost');
@@ -95,6 +96,63 @@ for (const native of [false, true]) {
     assert.equal(state.jugadores[room.anfitrionId].kills, 0);
     assert.equal(state.jugadores[guestId].unido, true);
     assert.equal(Object.values(state.jugadores).filter(player => player.unido && !player.esBot).length, 2);
+    assert.notEqual(state.jugadores[room.anfitrionId].equipo, state.jugadores[guestId].equipo);
+    assert.deepEqual(state.equipos.puntos, { azul: 0, rojo: 0 });
+  });
+
+  test(`Duelo y charcos: equipos equilibrados, bots, escudo y reingreso (${native ? 'nativo' : 'Socket.IO'})`, { timeout: 15000 }, async context => {
+    const port = 22000 + Math.floor(Math.random() * 15000);
+    const server = spawn(process.execPath, ['server.js', ...(native ? ['--nativo'] : [])], {
+      cwd: path.join(__dirname, '..'), env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    context.after(() => server.kill());
+    await new Promise((resolve, reject) => {
+      server.stdout.on('data', data => { if (String(data).includes('Servidor (')) resolve(); });
+      server.once('error', reject);
+      server.once('exit', code => reject(new Error(`Servidor terminó: ${code}`)));
+    });
+    const clients = Array.from({ length: 4 }, () => connect(`http://localhost:${port}`, native));
+    context.after(() => clients.forEach(client => client.close()));
+    await Promise.all(clients.map(client => client.wait('configMapa')));
+    const host = clients[0];
+    host.send('unirse', { nombre: 'Host', modoArena: 'equipos', mapa: 'orbital', cantidadBots: 5 });
+    await host.wait('estadoSala', state => state.jugadores.length === 1);
+    for (let i = 1; i < clients.length; i += 1) {
+      clients[i].send('unirse', { nombre: `Invitado ${i}`, modoArena: 'clasico', equipo: 'azul' });
+      const room = await host.wait('estadoSala', state => state.jugadores.length === i + 1);
+      if (i === 1) assert.notEqual(room.jugadores[0].equipo, room.jugadores[1].equipo);
+      if (i === 3) assert.equal(room.jugadores.filter(player => player.equipo === 'azul').length, 2);
+    }
+    host.messages.length = 0;
+    host.send('iniciarSala', {});
+    await Promise.all(clients.map(client => client.wait('inicioPartida')));
+    const snapshot = await host.wait('estadoJuego', state => state.preparacionRestante === 0);
+    for (const bot of [false, true]) {
+      const group = Object.values(snapshot.jugadores).filter(player => player.unido && player.esBot === bot);
+      assert.equal(group.length, bot ? 5 : 4);
+      const blue = group.filter(player => player.equipo === 'azul').length;
+      assert.ok(Math.abs(blue - (group.length - blue)) <= 1);
+    }
+    const room = await host.wait('estadoSala', state => state.activa);
+    const id = room.anfitrionId, team = snapshot.jugadores[id].equipo;
+    const map = await host.wait('configMapa', data => data.mapa === 'orbital');
+    for (const type of ['curacion', 'escudo']) {
+      assert.equal(map.zonasEspeciales.filter(zone => zone.tipo === type).length, 1);
+      assert.equal(map.zonasEspeciales.find(zone => zone.tipo === type).points.length, 18);
+    }
+    const zone = map.zonasEspeciales.find(zone => zone.tipo === 'escudo');
+    host.send('movimiento', { x: zone.x, y: zone.y, angle: 0 });
+    const shield = await host.wait('estadoJuego', state => state.jugadores[id]?.escudo > 0
+      && Math.hypot(state.jugadores[id].x - zone.x, state.jugadores[id].y - zone.y) < 10);
+    assert.ok(shield.jugadores[id].escudo <= 100);
+    host.send('abandonarPartida', {});
+    await host.wait('salidaPartida');
+    host.messages.length = 0;
+    host.send('unirse', { nombre: 'Regreso', modoArena: 'clasico', equipo: team === 'azul' ? 'rojo' : 'azul' });
+    await host.wait('inicioPartida');
+    const resumed = await host.wait('estadoJuego', state => state.jugadores[id]?.unido);
+    assert.equal(resumed.jugadores[id].equipo, team);
+    assert.ok(resumed.equipos);
   });
 
   test(`Abandonar y dificultad en todos los modos (${native ? 'nativo' : 'Socket.IO'})`, { timeout: 20000 }, async (context) => {

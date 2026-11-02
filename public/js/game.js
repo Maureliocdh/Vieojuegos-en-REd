@@ -41,6 +41,7 @@ let networkReady = false;
 let tiempoPartida = 120;
 let joinRequestPending = false;
 let soloModeLocked = false;
+let currentTeams = null;
 
 // ---- Animaciones de consumibles ----
 // { tipo: 'vida'|'escudo', inicio: ms, duracion: ms }
@@ -240,21 +241,48 @@ function actualizarScoreboard(jugadoresRecibidos) {
     .filter(([, jugador]) => jugador.unido)
     .sort(([, jugadorA], [, jugadorB]) => (jugadorB.kills || 0) - (jugadorA.kills || 0))
     .slice(0, isMobile ? 3 : 8);
-  const signature = JSON.stringify(ranking.map(([id, jugador]) => [id, jugador.nombre, jugador.kills || 0]));
+  const ownTeam = jugadoresRecibidos[network.id]?.equipo;
+  const signature = JSON.stringify([currentTeams, ownTeam, ranking.map(([id, jugador]) => [id, jugador.nombre, jugador.kills || 0, jugador.equipo])]);
   if (signature === scoreboardSignature) return;
   scoreboardSignature = signature;
 
-  scoreboard.replaceChildren(...ranking.map(([, jugador], index) => {
+  const rows = ranking.map(([, jugador], index) => {
     const row = document.createElement('div');
-    row.textContent = `${jugador.nombre || `Jugador ${index + 1}`}: ${jugador.kills || 0}`;
+    row.className = 'player-score';
+    if (currentTeams && ArenaTeams.valid(jugador.equipo)) row.dataset.equipo = jugador.equipo;
+    row.textContent = `${currentTeams && ArenaTeams.valid(jugador.equipo) ? ArenaTeams.catalog[jugador.equipo].nombre + ' · ' : ''}${jugador.nombre || `Jugador ${index + 1}`}: ${jugador.kills || 0}`;
     return row;
-  }));
+  });
+  if (currentTeams) {
+    const header = Object.keys(ArenaTeams.catalog).map(team => {
+      const row = document.createElement('div');
+      row.dataset.equipo = team; row.className = 'team-score';
+      row.textContent = `${ArenaTeams.catalog[team].nombre}: ${currentTeams.puntos[team]} / ${currentTeams.limite}`;
+      return row;
+    });
+    if (ArenaTeams.valid(ownTeam)) {
+      const own = document.createElement('div');
+      own.dataset.equipo = ownTeam; own.textContent = `Tu equipo: ${ArenaTeams.catalog[ownTeam].nombre}`;
+      header.push(own);
+    }
+    rows.unshift(...header);
+  }
+  scoreboard.classList.toggle('team-scoreboard', !!currentTeams);
+  scoreboard.replaceChildren(...rows);
 }
 
 // Se comprueba una vez: en móviles se añaden controles táctiles.
 const isMobile = matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 if (isMobile) document.body.classList.add('mobile');
 const keys = new Set();
+let reviveHeld = false;
+let reviveSending = false;
+let lastReviveMessage = 0;
+function stopReviving() {
+  reviveHeld = false;
+  if (reviveSending) network.send('reanimar', { activo: false });
+  reviveSending = false;
+}
 const mouse = { x: 0, y: 0 };
 const movement = { x: 0, y: 0 };
 const aim = { x: 0, y: 0 };
@@ -399,11 +427,13 @@ network.on('estadoSala', (room) => {
   list.replaceChildren();
   for (const j of room.jugadores) {
     const row = document.createElement('li');
+    if (ArenaTeams.valid(j.equipo)) row.dataset.equipo = j.equipo;
     const portrait = new Image(48,48);
     const skin = GameAssets.skins.find(s => s.id === j.skin) || GameAssets.skins[0];
     portrait.src = GameAssets.skinUrl(skin); portrait.alt = '';
     const name = document.createElement('span');
-    name.textContent = j.nombre + (j.id === network.id ? ' (tú)' : '');
+    name.textContent = j.nombre + (j.id === network.id ? ' (tú)' : '')
+      + (ArenaTeams.valid(j.equipo) ? ` · ${ArenaTeams.catalog[j.equipo].nombre}` : '');
     const badge = document.createElement('b');
     badge.textContent = j.id === room.anfitrionId ? 'ANFITRIÓN' : 'EN SALA';
     row.append(portrait,name,badge); list.append(row);
@@ -414,7 +444,8 @@ network.on('estadoSala', (room) => {
   document.getElementById('room-status').textContent = host ? 'Confirma que están todos y pulsa Iniciar partida.' : 'Esperando a que el anfitrión inicie la partida…';
   const difficulty = { facil: 'Fácil', normal: 'Normal', dificil: 'Difícil' }[room.reglas.dificultadBots] || 'Normal';
   const mapName = ArenaMaps.catalog.find(map => map.id === room.reglas.mapa)?.nombre || 'Isla Outpost';
-  document.getElementById('room-rules').textContent = mapName + ' · ' + (room.reglas.modoArena === 'puzzles' ? 'CON PUZZLES · ' : 'CLÁSICO · ') + room.jugadores.length + ' jugadores · ' + room.reglas.cantidadBots + ' bots (' + difficulty + ') · ' + room.reglas.limiteKills + ' bajas · ' + room.reglas.duracion / 60 + ' min';
+  const modeName = { puzzles: 'CON PUZZLES', equipos: 'DUELO POR EQUIPOS', clasico: 'CLÁSICO' }[room.reglas.modoArena] || 'CLÁSICO';
+  document.getElementById('room-rules').textContent = mapName + ' · ' + modeName + ' · ' + room.jugadores.length + ' jugadores · ' + room.reglas.cantidadBots + ' bots (' + difficulty + ') · ' + room.reglas.limiteKills + (room.reglas.modoArena === 'equipos' ? ' bajas por equipo · Sin fuego amigo · ' : ' bajas · ') + room.reglas.duracion / 60 + ' min';
 });
 function actualizarCuentaInicio() {
   const overlay = document.getElementById('match-countdown');
@@ -439,6 +470,9 @@ document.getElementById('start-match').addEventListener('click', () => {
 });
 
 network.on('configPartida', (rules) => {
+  currentTeams = rules.equipos ?? null;
+  document.querySelector('#match-countdown h2').textContent = rules.modoArena === 'equipos'
+    ? 'Colabora con tu equipo. Sin fuego amigo.' : 'Elimina a todos los que puedas';
   const locked = rules.activa || rules.finalizada || rules.votacionActiva;
   window.selectArenaMap(locked ? rules.mapa : rules.mapaSiguiente || ArenaUI.mapa);
   document.getElementById('match-map').disabled = locked || !!rules.mapaSiguiente;
@@ -447,7 +481,7 @@ network.on('configPartida', (rules) => {
     select.disabled = locked;
     select.value = locked ? rules[field] : ArenaUI[field];
   }
-  document.querySelector('.lobby-footer > span:nth-child(2)').textContent = `${rules.limiteKills} BAJAS PARA GANAR`;
+  document.querySelector('.lobby-footer > span:nth-child(2)').textContent = `${rules.limiteKills} BAJAS ${rules.modoArena === 'equipos' ? 'POR EQUIPO' : 'PARA GANAR'}`;
   document.querySelector('.match-tag b').textContent = `${String(rules.duracion / 60).padStart(2, '0')}:00`;
   soloModeLocked = rules.activa && rules.soloJugador && !joinRequestPending && !gameStarted;
   if (soloModeLocked) {
@@ -473,6 +507,7 @@ network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, mapa = 'outpost', obstaculos:
 });
 
 network.on('inicioPartida', ({ tiempoRestante, preparacionRestante: countdown = 0, preparacionTactica = null }) => {
+  stopReviving();
   if (!currentRoom?.jugadores.some(j => j.id === network.id)) return;
   resultsPinned = false;
   keys.clear();
@@ -509,22 +544,34 @@ network.on('finDeJuego', (podio) => {
   preparacionRestante = 0;
   actualizarCuentaInicio();
   podiumList.replaceChildren();
-  playResultMusic(podio.slice(0, 3).some((jugador) => jugador.id === network.id));
+  const ownTeam = podio.find(jugador => jugador.id === network.id)?.equipo;
+  const teamResult = document.getElementById('team-result');
+  teamResult.hidden = !currentTeams;
+  delete teamResult.dataset.equipo;
+  if (currentTeams) {
+    const winner = currentTeams.ganador;
+    if (winner) teamResult.dataset.equipo = winner;
+    teamResult.textContent = `${winner ? `Victoria del equipo ${ArenaTeams.catalog[winner].nombre}` : 'Empate'} · Azul ${currentTeams.puntos.azul} — Rojo ${currentTeams.puntos.rojo}`;
+  }
+  playResultMusic(currentTeams ? !!currentTeams.ganador && ownTeam === currentTeams.ganador
+    : podio.slice(0, 3).some((jugador) => jugador.id === network.id));
   const leaders = document.getElementById('result-leaders');
   leaders.replaceChildren();
   podio.slice(0,3).forEach((j, index) => {
     const card = document.createElement('article');
+    if (ArenaTeams.valid(j.equipo)) card.dataset.equipo = j.equipo;
     const position = document.createElement('b'); position.textContent = '#' + (index + 1);
     const portrait = new Image(96,96);
     portrait.src = GameAssets.skinUrl(GameAssets.skins.find(s => s.id === j.skin) || GameAssets.skins[0]); portrait.alt = '';
-    const name = document.createElement('h3'); name.textContent = j.nombre;
+    const name = document.createElement('h3'); name.textContent = j.nombre + (ArenaTeams.valid(j.equipo) ? ` · ${ArenaTeams.catalog[j.equipo].nombre}` : '');
     const score = document.createElement('p'); score.textContent = j.kills + ' bajas';
     card.append(position,portrait,name,score); leaders.append(card);
   });
   podio.forEach((jugador, index) => {
     const item = document.createElement('li');
+    if (ArenaTeams.valid(jugador.equipo)) item.dataset.equipo = jugador.equipo;
     if (jugador.id === network.id) item.classList.add('own-score');
-    item.textContent = `${index + 1}. ${jugador.nombre} — ${jugador.kills} bajas`;
+    item.textContent = `${index + 1}. ${jugador.nombre}${ArenaTeams.valid(jugador.equipo) ? ` (${ArenaTeams.catalog[jugador.equipo].nombre})` : ''} — ${jugador.kills} bajas`;
     podiumList.appendChild(item);
   });
   finishScreen.style.display = 'flex';
@@ -532,6 +579,7 @@ network.on('finDeJuego', (podio) => {
 });
 
 network.on('reinicioPartida', () => {
+  stopReviving();
   if (resultsPinned) return;
   window.renderTactical?.(null);
   stopResultMusic();
@@ -581,7 +629,9 @@ network.on('entradaRechazada', ({ motivo } = {}) => {
 });
 
 const environmentalDamage = {};
-network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor, cofres: cofresServidor, preparacionRestante: countdown = 0, preparacionTactica = null }) => {
+const environmentalHealing = {};
+network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor, cofres: cofresServidor, preparacionRestante: countdown = 0, preparacionTactica = null, equipos = null }) => {
+  currentTeams = equipos;
   preparacionRestante = countdown;
   actualizarCuentaInicio();
   window.renderTactical?.(preparacionTactica);
@@ -614,9 +664,11 @@ network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelSer
     const escudoAnterior = prevEscudos[id] ?? jugador.escudo;
     const deltaVida = vidaAnterior - jugador.vida;
     const deltaEscudo = escudoAnterior - jugador.escudo;
-    if (Buildings.concealed(obstaculos, jugador, jugadores[network.id])) {
+    if (Buildings.concealed(obstaculos, jugador, jugadores[network.id])
+      || Boolean(jugadoresAnteriores[id]?.abatido) !== Boolean(jugador.abatido)) {
       prevVidas[id] = jugador.vida;
       prevEscudos[id] = jugador.escudo;
+      delete environmentalHealing[id];
       continue;
     }
 
@@ -633,15 +685,24 @@ network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelSer
     if (Math.round(deltaEscudo) > 0 && !jugador.muerto) {
       floatingNumbers.push({ playerId: id, x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 48, valor: `-${Math.round(deltaEscudo)}🛡`, color: '#42a5f5', nacido: ahora, vida: 1000 });
     }
-    if (deltaVida < 0) {
-      floatingNumbers.push({ playerId: id, x: jugador.x, y: jugador.y - 30, valor: `+${Math.round(-deltaVida)}❤`, color: '#2ecc71', nacido: ahora, vida: 1000 });
+    const healing = environmentalHealing[id] ||= { vida: 0, escudo: 0 };
+    for (const [stat, delta, color, icon] of [['vida', deltaVida, '#2ecc71', '❤'], ['escudo', deltaEscudo, '#a6a2ff', '🛡']]) {
+      if (delta < 0) {
+        healing[stat] += -delta;
+        const shown = Math.floor(healing[stat] + 0.0001);
+        if (shown >= 1) {
+          floatingNumbers.push({ playerId: id, x: jugador.x, y: jugador.y - (stat === 'vida' ? 30 : 48),
+            valor: `+${shown}${icon}`, color, nacido: ahora, vida: 1000 });
+          healing[stat] -= shown;
+        }
+      } else if (delta > 0) healing[stat] = 0;
     }
     prevVidas[id] = jugador.vida;
     prevEscudos[id] = jugador.escudo;
   }
   // Limpia jugadores que ya no existen
   for (const id of Object.keys(prevVidas)) {
-    if (!jugadores[id]) { delete prevVidas[id]; delete prevEscudos[id]; }
+    if (!jugadores[id]) { delete prevVidas[id]; delete prevEscudos[id]; delete environmentalHealing[id]; }
   }
 
   // Sincroniza el jugador local, especialmente tras un respawn del servidor.
@@ -783,7 +844,7 @@ function requestJoin(soloJugador) {
     limiteKills: Number(document.getElementById('match-kills').value),
     cantidadBots: Number(document.getElementById('match-bots').value),
     dificultadBots: document.getElementById('match-difficulty').value,
-    duracion: Number(document.getElementById('match-duration').value), soloJugador, modoArena: ArenaUI.modo === 'puzzles' ? 'puzzles' : 'clasico' });
+    duracion: Number(document.getElementById('match-duration').value), soloJugador, modoArena: ['puzzles', 'equipos'].includes(ArenaUI.modo) ? ArenaUI.modo : 'clasico' });
 }
 
 playButton.addEventListener('click', () => requestJoin(ArenaUI.modo === 'solo'));
@@ -840,7 +901,10 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyF' && !event.repeat) throwGrenade();
 });
 window.addEventListener('keyup', (event) => keys.delete(event.code));
-window.addEventListener('blur', () => keys.clear());
+window.addEventListener('blur', () => { keys.clear(); stopReviving(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { keys.clear(); stopReviving(); }
+});
 canvas.addEventListener('mousemove', (event) => {
   const bounds = canvas.getBoundingClientRect();
   mouse.x = event.clientX - bounds.left;
@@ -852,7 +916,8 @@ function shoot() {
   if (preparacionRestante > 0 || (window.tacticalState && ['instrucciones', 'puzzles', 'tienda'].includes(window.tacticalState.phase))) return false;
   if (!gameStarted || gameFinished) return false;
   const jugadorLocal = jugadores[network.id];
-  if (!jugadorLocal || jugadorLocal.muerto || document.hidden || document.getElementById('sound-dialog').open) return false;
+  if (!jugadorLocal || jugadorLocal.muerto || jugadorLocal.abatido || jugadorLocal.reanimando || reviveSending
+    || document.hidden || document.getElementById('sound-dialog').open) return false;
   const arma = jugadorLocal?.inventario?.[jugadorLocal.slotSeleccionado] || 'puños';
   const cooldown = STATS_ARMAS_CLIENTE[arma]?.cooldown || STATS_ARMAS_CLIENTE['puños'].cooldown;
   const ahora = performance.now();
@@ -903,7 +968,7 @@ function shoot() {
 function throwGrenade() {
   if (!gameStarted || gameFinished) return;
   const jugadorLocal = jugadores[network.id];
-  if (!jugadorLocal || jugadorLocal.muerto) return;
+  if (!jugadorLocal || jugadorLocal.muerto || jugadorLocal.abatido || jugadorLocal.reanimando || reviveSending) return;
   const slotGranada = jugadorLocal.inventario?.indexOf('granada');
   if (slotGranada === undefined || slotGranada === -1) return;
   const ahora = performance.now();
@@ -916,14 +981,15 @@ function throwGrenade() {
 }
 
 function requestReload() {
-  if (gameStarted && !jugadores[network.id]?.muerto) network.send('recargar', {});
+  const jugador = jugadores[network.id];
+  if (gameStarted && jugador && !jugador.muerto && !jugador.abatido && !jugador.reanimando && !reviveSending) network.send('recargar', {});
 }
 
 /** Tira el item del slot actual al suelo. Tecla G en PC, botón en móvil. */
 function dropCurrentItem() {
   if (!gameStarted || gameFinished) return;
   const jugadorLocal = jugadores[network.id];
-  if (!jugadorLocal || jugadorLocal.muerto) return;
+  if (!jugadorLocal || jugadorLocal.muerto || jugadorLocal.abatido || jugadorLocal.reanimando || reviveSending) return;
   const slot = jugadorLocal.slotSeleccionado;
   const item = jugadorLocal.inventario?.[slot];
   if (!item || item === 'puños') return;
@@ -944,6 +1010,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) fireH
 function selectSlot(slot) {
   if (!gameStarted || !Number.isInteger(slot) || slot < 0 || slot > 4) return;
   const jugadorLocal = jugadores[network.id];
+  if (!jugadorLocal || jugadorLocal.muerto || jugadorLocal.abatido || jugadorLocal.reanimando || reviveSending) return;
   if (jugadorLocal) jugadorLocal.slotSeleccionado = slot;
   network.send('cambiarSlot', { slot });
 }
@@ -971,7 +1038,7 @@ canvas.addEventListener('pointerdown', (event) => {
 });
 
 function getNearbyLootPlatform(jugadorLocal) {
-  if (!jugadorLocal || jugadorLocal.muerto || !jugadorLocal.inventario
+  if (!jugadorLocal || jugadorLocal.muerto || jugadorLocal.abatido || !jugadorLocal.inventario
     || jugadorLocal.inventario[jugadorLocal.slotSeleccionado] === 'puños'
     || jugadorLocal.inventario.some((item) => item === null)) return null;
   return plataformas.find((plataforma) => (
@@ -982,6 +1049,12 @@ function getNearbyLootPlatform(jugadorLocal) {
 
 /** Muestra el tiempo restante de respawn del jugador local. */
 function actualizarMensajeRespawn(jugadorLocal) {
+  if (jugadorLocal?.abatido) {
+    const segundos = Math.max(0, Math.ceil((jugadorLocal.abatidoHasta - Date.now()) / 1000));
+    respawnMessage.textContent = `Abatido: ${segundos}s · Espera a un compañero`;
+    respawnMessage.classList.add('visible');
+    return;
+  }
   if (!jugadorLocal?.muerto) {
     respawnMessage.classList.remove('visible');
     return;
@@ -995,15 +1068,25 @@ function actualizarMensajeRespawn(jugadorLocal) {
 function attemptExchange() {
   if (!gameStarted || gameFinished) return;
   const jugadorLocal = jugadores[network.id];
+  if (jugadorLocal?.abatido || getNearbyDowned(jugadorLocal)) return;
   if (getNearbyChest(jugadorLocal) || getNearbyDoor(jugadorLocal) || getNearbyLootPlatform(jugadorLocal)) network.send('intercambiar', {});
+}
+function getNearbyDowned(jugador) {
+  if (!currentTeams || !jugador?.unido || jugador.muerto || jugador.abatido) return null;
+  const candidates = Object.values(jugadores).filter(other => other.abatido);
+  if (!candidates.length) return null;
+  const walls = obstaculos.flatMap(Buildings.walls);
+  return candidates.filter(other => ArenaTeams.canRevive(jugador, other, walls))
+    .sort((a, b) => Math.hypot(jugador.x - a.x, jugador.y - a.y)
+      - Math.hypot(jugador.x - b.x, jugador.y - b.y))[0] || null;
 }
 
 function getNearbyChest(jugador) {
-  return jugador && !jugador.muerto ? cofres.find((cofre) => !cofre.abierto && Math.hypot(jugador.x - cofre.x, jugador.y - cofre.y) <= 105) : null;
+  return jugador && !jugador.muerto && !jugador.abatido ? cofres.find((cofre) => !cofre.abierto && Math.hypot(jugador.x - cofre.x, jugador.y - cofre.y) <= 105) : null;
 }
 
 function getNearbyDoor(jugadorLocal) {
-  if (!jugadorLocal || jugadorLocal.muerto) return null;
+  if (!jugadorLocal || jugadorLocal.muerto || jugadorLocal.abatido) return null;
   return obstaculos.filter(Buildings.isBuilding).flatMap(building => Buildings.doors(building).map(door => ({
     puertaAbierta: door.abierta, compuerta: !!building.puertas,
     distance: Math.hypot(jugadorLocal.x - door.x - door.width / 2, jugadorLocal.y - door.y - door.height / 2),
@@ -1012,6 +1095,15 @@ function getNearbyDoor(jugadorLocal) {
 
 // En móvil, el botón solo se muestra cuando el cliente detecta una oportunidad válida.
 swapButton?.addEventListener('click', attemptExchange);
+swapButton?.addEventListener('pointerdown', event => {
+  if (!getNearbyDowned(jugadores[network.id])) return;
+  event.preventDefault();
+  reviveHeld = true;
+  swapButton.setPointerCapture(event.pointerId);
+});
+swapButton?.addEventListener('pointerup', stopReviving);
+swapButton?.addEventListener('pointercancel', stopReviving);
+swapButton?.addEventListener('lostpointercapture', stopReviving);
 reloadButton?.addEventListener('click', requestReload);
 document.getElementById('drop-button')?.addEventListener('click', dropCurrentItem);
 document.getElementById('grenade-button')?.addEventListener('click', throwGrenade);
@@ -1051,8 +1143,16 @@ function createMobileControls() {
 if (isMobile) loadNippleJS().then(createMobileControls).catch(console.error);
 
 function update(deltaSeconds) {
-  if (preparacionRestante > 0 || (window.tacticalState && ['instrucciones', 'puzzles', 'tienda'].includes(window.tacticalState.phase))) { fireHeld = false; return; }
-  if (document.getElementById('sound-dialog').open) { fireHeld = false; return; }
+  if (preparacionRestante > 0 || (window.tacticalState && ['instrucciones', 'puzzles', 'tienda'].includes(window.tacticalState.phase))) { fireHeld = false; stopReviving(); return; }
+  if (document.getElementById('sound-dialog').open) { fireHeld = false; stopReviving(); return; }
+  const canRevive = gameStarted && !gameFinished && !document.hidden
+    && (keys.has('KeyE') || reviveHeld) && getNearbyDowned(jugadores[network.id]);
+  if (canRevive) {
+    if (!reviveSending || performance.now() - lastReviveMessage >= 100) {
+      network.send('reanimar', { activo: true });
+      lastReviveMessage = performance.now(); reviveSending = true;
+    }
+  } else if (reviveSending) stopReviving();
   if (!gameStarted || gameFinished || jugadores[network.id]?.muerto) fireHeld = false;
   let moveX = movement.x;
   let moveY = movement.y;
@@ -1063,7 +1163,7 @@ function update(deltaSeconds) {
 
   const magnitude = Math.hypot(moveX, moveY);
   if (magnitude > 0) {
-    const multiplier = SpecialZones.effects(player).speedMultiplier;
+    const multiplier = SpecialZones.effects(player).speedMultiplier * (jugadores[network.id]?.abatido ? 0.2 : 1);
     player.x += (moveX / magnitude) * player.speed * multiplier * deltaSeconds;
     player.y += (moveY / magnitude) * player.speed * multiplier * deltaSeconds;
     // Predicción local: el límite se aplica aquí y también de forma autoritativa en el servidor.
@@ -1118,6 +1218,7 @@ function drawWeaponOnPlayer(jugador) {
   ctx.save();
   ctx.translate(jugador.x, jugador.y);
   ctx.rotate(jugador.angle);
+  if (jugador.abatido) { ctx.scale(1, 0.55); ctx.globalAlpha = 0.65; }
   if (arma !== 'puños' && image?.complete && image.naturalWidth) {
     const size = ['botiquin', 'escudo_pocion', 'granada'].includes(arma) ? 38 : 58;
     ctx.drawImage(image, 28 - size / 2, -size / 2, size, size);
@@ -1370,21 +1471,24 @@ function drawMinimap() {
 
   // ---- Enemigos detectados por disparo ----
   for (const [id, jugador] of Object.entries(jugadores)) {
-    if (id === network.id || jugador.muerto) continue;
+    if (id === network.id || jugador.muerto || !jugador.unido) continue;
     if (Buildings.concealed(obstaculos, jugador, jugadores[network.id])) continue;
+    const teammate = currentTeams && ArenaTeams.same(jugador, jugadores[network.id]);
     // ultimoDisparo viene del servidor en ms epoch (Date.now())
     const tiempoDesdeDisparo = ahora - (jugador.ultimoDisparo || 0);
-    if (tiempoDesdeDisparo > MINIMAP_SHOT_WINDOW) continue;
+    if (!teammate && tiempoDesdeDisparo > MINIMAP_SHOT_WINDOW) continue;
 
     // Opacidad que se desvanece: 1 justo al disparar → 0 al final de la ventana
-    const fade = 1 - tiempoDesdeDisparo / MINIMAP_SHOT_WINDOW;
+    const fade = teammate ? 1 : 1 - tiempoDesdeDisparo / MINIMAP_SHOT_WINDOW;
+    const markerColor = currentTeams && ArenaTeams.valid(jugador.equipo) ? ArenaTeams.catalog[jugador.equipo].color
+      : jugador.esBot ? '#ffb74d' : '#ef5350';
     const ex = mx + jugador.x * scaleX;
     const ey = my + jugador.y * scaleY;
 
     // Halo exterior que se expande y desvanece
     ctx.save();
     ctx.globalAlpha = fade * 0.4;
-    ctx.fillStyle = jugador.esBot ? '#ffb74d' : '#ef5350';
+    ctx.fillStyle = markerColor;
     ctx.beginPath();
     ctx.arc(ex, ey, 7 + (1 - fade) * 5, 0, Math.PI * 2);
     ctx.fill();
@@ -1393,7 +1497,7 @@ function drawMinimap() {
     // Punto central sólido
     ctx.save();
     ctx.globalAlpha = 0.5 + fade * 0.5;
-    ctx.fillStyle = jugador.esBot ? '#ffb74d' : '#ef5350';
+    ctx.fillStyle = markerColor;
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -1801,7 +1905,14 @@ function draw() {
       ctx.stroke();
     }
     ctx.restore();
-    drawWeaponOnPlayer(jugador);
+    if (!jugador.abatido) drawWeaponOnPlayer(jugador);
+    if (currentTeams && ArenaTeams.valid(jugador.equipo)) {
+      ctx.save();
+      ctx.strokeStyle = ArenaTeams.catalog[jugador.equipo].color;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(jugador.x, jugador.y, 36, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
 
     const spriteHalfH = 30;
 
@@ -1811,9 +1922,13 @@ function draw() {
     ctx.textAlign = 'center';
     ctx.lineWidth = 3;
     ctx.strokeStyle = '#000';
-    ctx.strokeText(jugador.esBot ? 'BOT' : (jugador.nombre || ''), jugador.x, jugador.y - spriteHalfH - 28);
-    ctx.fillStyle = jugador.esBot ? '#ffb74d' : '#fff';
-    ctx.fillText(jugador.esBot ? 'BOT' : (jugador.nombre || ''), jugador.x, jugador.y - spriteHalfH - 28);
+    const team = currentTeams && ArenaTeams.catalog[jugador.equipo];
+    const downLabel = jugador.abatido
+      ? ` · ABATIDO ${Math.max(0, Math.ceil((jugador.abatidoHasta - Date.now()) / 1000))}s${jugador.reanimadorId ? ` · ${Math.floor(jugador.progresoReanimacion * 100)}%` : ''}` : '';
+    const playerLabel = (jugador.esBot ? 'BOT' : (jugador.nombre || '')) + (team ? ` · ${team.nombre}` : '') + downLabel;
+    ctx.strokeText(playerLabel, jugador.x, jugador.y - spriteHalfH - 28);
+    ctx.fillStyle = team ? team.color : jugador.esBot ? '#ffb74d' : '#fff';
+    ctx.fillText(playerLabel, jugador.x, jugador.y - spriteHalfH - 28);
     ctx.restore();
 
     // Barra de salud
@@ -1823,7 +1938,7 @@ function draw() {
     const vida = Math.max(0, Math.min(100, jugador.vida));
     ctx.fillStyle = '#c62828';
     ctx.fillRect(jugador.x - barWidth / 2, barY, barWidth, barHeight);
-    ctx.fillStyle = '#2ecc71';
+    ctx.fillStyle = jugador.abatido ? '#ffb74d' : '#2ecc71';
     ctx.fillRect(jugador.x - barWidth / 2, barY, barWidth * (vida / 100), barHeight);
 
     // Barra de escudo
@@ -1841,8 +1956,10 @@ function draw() {
   const nearbyLoot = getNearbyLootPlatform(jugadorLocal);
   const nearbyDoor = getNearbyDoor(jugadorLocal);
   const nearbyChest = getNearbyChest(jugadorLocal);
+  const nearbyDowned = getNearbyDowned(jugadorLocal);
   const doorName = nearbyDoor?.compuerta ? 'compuerta' : 'puerta';
-  const interactionLabel = nearbyChest ? 'Abrir cofre' : nearbyDoor ? `${nearbyDoor.puertaAbierta ? 'Cerrar' : 'Abrir'} ${doorName}` : 'Intercambiar';
+  const interactionLabel = nearbyDowned ? `Mantener para levantar · ${Math.floor((nearbyDowned.progresoReanimacion || 0) * 100)}%`
+    : nearbyChest ? 'Abrir cofre' : nearbyDoor ? `${nearbyDoor.puertaAbierta ? 'Cerrar' : 'Abrir'} ${doorName}` : 'Intercambiar';
   if (nearbyLoot && !nearbyDoor && !isMobile) {
     ctx.save();
     ctx.font = 'bold 18px sans-serif';
@@ -1900,7 +2017,7 @@ function draw() {
   }
 
   for (const building of visibleObstacles.filter(Buildings.isBuilding)) WorldArt.roof(ctx, building, jugadorLocal);
-  if (nearbyDoor || nearbyChest) {
+  if (nearbyDoor || nearbyChest || nearbyDowned) {
     ctx.save();
     ctx.font = 'bold 15px sans-serif';
     ctx.textAlign = 'center';
@@ -1926,9 +2043,9 @@ function draw() {
   drawRedVignette(jugadores[network.id]);
 
   actualizarMensajeRespawn(jugadorLocal);
-  document.getElementById('drop-button').disabled = !jugadorLocal.inventario?.[jugadorLocal.slotSeleccionado]
+  document.getElementById('drop-button').disabled = jugadorLocal.abatido || !!jugadorLocal.reanimando || !jugadorLocal.inventario?.[jugadorLocal.slotSeleccionado]
     || jugadorLocal.inventario[jugadorLocal.slotSeleccionado] === 'puños';
-  swapButton?.classList.toggle('visible', Boolean((nearbyLoot || nearbyDoor || nearbyChest) && isMobile));
+  swapButton?.classList.toggle('visible', Boolean((nearbyLoot || nearbyDoor || nearbyChest || nearbyDowned) && !jugadorLocal.abatido && isMobile));
   swapButton.title = interactionLabel;
   swapButton.setAttribute('aria-label', interactionLabel);
   drawInventoryUI(jugadorLocal);

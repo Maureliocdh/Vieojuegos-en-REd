@@ -140,9 +140,39 @@ Selecciona una pestaña antes de crear la sala:
 | :--- | :--- | :--- |
 | Clásico | Cuenta de cuatro segundos y combate Arena habitual. | Multijugador. |
 | Con puzzles | 5 s de instrucciones, 60 s de balizas, 20 s de compras, cuenta de cuatro segundos y combate Arena. | Multijugador. |
+| Duelo por equipos | Cuenta de cuatro segundos; Azul contra Rojo, bajas colectivas y sin fuego amigo. | Multijugador con bots opcionales. |
 | Un jugador | Arena clásica con la cantidad de bots elegida. | Sala exclusiva, sin invitados. |
 
 Los invitados heredan la modalidad elegida por el anfitrión y pueden personalizar su nombre y personaje. El tiempo máximo configurado corresponde al combate; no consume los segundos de puzzles, tienda ni cuenta inicial.
+
+### Duelo por equipos
+
+Selecciona **Duelo por equipos** antes de crear sala. El servidor reparte a los humanos entre **Azul** y **Rojo**: dos jugadores quedan 1/1; cuatro, 2/2. Los bots se reparten por separado, con una diferencia máxima de uno en humanos, bots y participantes totales. Si un grupo es impar, el extra se decide al azar; si ambos grupos son impares, sus extras se compensan para mantener el total equilibrado. La cantidad seleccionada de bots sigue siendo el total de la partida, no la cantidad por equipo.
+
+La sala muestra la distribución provisional y se vuelve a equilibrar al iniciar cada ronda. Durante el combate no se cambia a nadie de equipo: abandonar y volver conserva su equipo, salud y equipo de combate. No hay fuego amigo con balas, puños ni granadas; en este modo la granada tampoco daña a quien la lanza. Los bots atacan únicamente al equipo contrario. La tormenta y los peligros del suelo sí afectan a ambos equipos.
+
+Cada baja enemiga suma un punto al equipo y a quien la consigue. El objetivo del menú se interpreta como **bajas por equipo**; gana quien lo alcance primero. Al agotarse el tiempo gana el equipo con más puntos; con igualdad se declara empate. Las bajas colectivas se conservan aunque un jugador abandone. Los nombres, aros, sala, marcador y resultados usan colores y etiquetas de equipo, sin cambiar las skins. El minimapa permite ver compañeros visibles aunque no disparen, sin revelar jugadores ocultos en arbustos.
+
+La votación de mapa y el inicio automático también funcionan en este modo: la siguiente ronda conserva las reglas, vuelve a equilibrar a quienes continúan y reinicia ambos marcadores. Compatible con los dos mapas, Socket.IO, WebSocket nativo y controles móviles.
+
+#### Compañeros abatidos y reanimación
+
+Solo en duelo por equipos, perder toda la vida deja al jugador **abatido durante un máximo de 20 segundos**, con 30 puntos de resistencia para poder rematarlo. Puede arrastrarse al 20 % de velocidad, pero no atacar, usar objetos, recargar ni recoger botín. Conserva su inventario hasta morir definitivamente. Los perdigones de un mismo disparo no lo abaten y rematan de una sola vez.
+
+Un compañero activo a menos de 105 unidades y sin paredes entre ambos puede levantarlo **manteniendo E durante 3 segundos**; en móvil hay que mantener pulsado el botón de interacción. El porcentaje aparece junto al abatido y en la interacción. Soltar, alejarse, ocultar la pestaña o perder conexión interrumpe el rescate y reinicia el progreso; varios rescatadores no aceleran la recuperación.
+
+Al levantarse recupera **25 de vida y cero escudo**. Los charcos no levantan abatidos ni recargan su resistencia. Los bots también pueden quedar abatidos y priorizan rescatar compañeros cercanos. Si se agotan los 20 segundos, un enemigo lo remata o todo su equipo vivo queda abatido, muere y reaparece con las reglas habituales. La baja se suma solo al morir definitivamente, nunca al abatir o reanimar; el desangrado conserva la autoría del atacante original. Los demás modos mantienen la muerte y reaparición anteriores.
+
+### Charcos de recuperación
+
+Además de las zonas de daño y hielo, cada mapa genera **dos charcos nuevos**, uno de cada tipo:
+
+- **Vida**: charco verde con una cruz; restaura **10 puntos de vida por segundo** hasta 100.
+- **Escudo**: charco violeta con un símbolo de escudo; restaura **10 puntos de escudo por segundo** hasta 100.
+
+Tienen contornos irregulares y aplanados, no círculos. Solo actúan dentro de su polígono visible y dejan de recuperar al salir. No consumen objetos ni requieren pulsar botones. El servidor aplica la recuperación a humanos y bots vivos, en todos los modos y ambos transportes; no reviven muertos ni funcionan durante la preparación, tienda o encuesta. La curación no repone escudo ni el escudo repone vida, y superponer zonas del mismo tipo no multiplica la velocidad. Los indicadores de recuperación muestran puntos enteros, no avisos de `+0`.
+
+Se conservan los tres peligros de daño y las tres zonas de hielo existentes. Los nuevos charcos aparecen separados de los peligros y, en la estación, dentro de salas accesibles.
 
 En **Con puzzles**, cada jugador entra solo a una cámara de entrenamiento de 1000×700, con nueve balizas aleatorias separadas por sectores. Primero aparecen las instrucciones y una cuenta sincronizada de cinco segundos: durante ella se muestra la sala con las balizas apagadas y el movimiento bloqueado. Al terminar empieza el minuto completo de entrenamiento. Se ilumina una baliza a la vez durante seis segundos. Se camina con WASD o los botones direccionales de pantalla; acercarse a una baliza encendida recoge automáticamente su energía y otorga cinco créditos. Después de recogerla o de que expire, hay una pausa de 0,4 segundos antes de la siguiente activación. No hay daño ni penalización por dejar pasar energía.
 
@@ -168,6 +198,8 @@ El botón de **abandonar partida** (icono de salida, junto al sonido) te devuelv
 ## Controles
 
 ### Ordenador
+
+Sobre el área de juego, el puntero es una mira blanca con contorno oscuro. Su centro coincide con el punto de apuntado; los menús y botones conservan sus cursores normales. Funciona en Chrome y Firefox; si el navegador no carga la imagen, utiliza la mira estándar del sistema. Los controles táctiles no cambian.
 
 | Acción | Control |
 | :--- | :--- |

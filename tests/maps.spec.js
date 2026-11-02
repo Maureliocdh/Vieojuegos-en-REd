@@ -17,7 +17,7 @@ test('Selector persistente y estación compartida en todos los modos', async ({ 
   await guest.goto('/');
   await expect(guest.locator('#jugar-button')).toBeEnabled();
   await guest.locator('#nickname').fill('Tripulación');
-  for (const mode of ['clasico', 'puzzles', 'solo']) {
+  for (const mode of ['clasico', 'puzzles', 'solo', 'equipos']) {
     await page.locator(`[data-mode=${mode}]`).click();
     await page.locator('#match-bots').selectOption('0');
     await page.locator('#jugar-button').click();

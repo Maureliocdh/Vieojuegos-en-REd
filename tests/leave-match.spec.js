@@ -14,7 +14,7 @@ test('Dificultad persistente y salida individual al menú en todos los modos', a
   guest.on('pageerror', error => errors.push(error.message));
   await guest.goto('/');
   await expect(guest.locator('#jugar-button')).toBeEnabled();
-  for (const mode of ['clasico', 'puzzles', 'solo']) {
+  for (const mode of ['clasico', 'puzzles', 'solo', 'equipos']) {
     await expect(page.locator('#jugar-button')).toBeEnabled();
     await page.locator(`[data-mode="${mode}"]`).click();
     await page.locator('#nickname').fill('Anfitrión');

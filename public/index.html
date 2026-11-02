@@ -55,6 +55,7 @@
             <div class="arena-tabs" role="tablist" aria-label="Modo de arena">
               <button id="tab-clasico" type="button" role="tab" aria-selected="true" aria-controls="arena-mode-panel" data-mode="clasico">Clásico</button>
               <button id="tab-puzzles" type="button" role="tab" aria-selected="false" aria-controls="arena-mode-panel" data-mode="puzzles" tabindex="-1">Con puzzles</button>
+              <button id="tab-equipos" type="button" role="tab" aria-selected="false" aria-controls="arena-mode-panel" data-mode="equipos" tabindex="-1">Duelo por equipos</button>
               <button id="singleplayer-button" type="button" role="tab" aria-selected="false" aria-controls="arena-mode-panel" data-mode="solo" tabindex="-1">Un jugador</button>
             </div>
             <div id="arena-mode-panel" role="tabpanel" aria-labelledby="tab-clasico"><p id="mode-description">Combate directo con reapariciones. Reúne a tus amigos y domina la arena.</p></div>
@@ -95,6 +96,7 @@
       <div class="panel-fin">
         <header class="lobby-header"><strong>O+</strong><span>OUTPOST / RESULTADOS</span></header>
         <p class="eyebrow">RONDA COMPLETADA</p><h1>Los mejores de la arena</h1>
+        <p id="team-result" class="team-result" hidden role="status"></p>
         <section class="map-vote" aria-label="Votación del siguiente mapa" hidden></section>
         <div id="result-leaders"></div>
         <h2>Clasificación completa</h2>
@@ -150,6 +152,7 @@
     <script src="/js/buildings.js"></script>
     <script src="/js/zones.js"></script>
     <script src="/js/maps.js"></script>
+    <script src="/js/teams.js"></script>
     <script src="/js/lobby.js"></script>
     <script src="/js/world.js"></script>
     <script src="/js/weapon-audio.js"></script>

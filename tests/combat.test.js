@@ -26,7 +26,7 @@ function loadGame() {
   vm.runInContext(`${fs.readFileSync(serverPath, 'utf8')}\nglobalThis.testing = { jugadores, plataformas, balas, itemsEnSuelo, obstaculos, addPlayer, unirseJugador, equiparArma, createBullet, reloadWeapon, exchangeWithPlatform, dropItem, interactuar, moverEntidad, colisionaConObstaculo, respawn, recogerObjeto };`, sandbox);
   const game = sandbox.testing;
   game.unirseSala = game.unirseJugador;
-  vm.runInContext('Object.assign(testing, { processClientMessage, tactical: () => preparacionTactica, configMapa, actualizarVotacionMapa });', sandbox);
+  vm.runInContext('Object.assign(testing, { processClientMessage, tactical: () => preparacionTactica, configMapa, actualizarVotacionMapa, estadoEquipos, aplicarZonasEspeciales, procesarGranadas, granadas, resolverBaja, reanimar, procesarAbatidos, removePlayer });', sandbox);
   vm.runInContext('Object.assign(testing, { zonaSegura, actualizarZonaSegura, aplicarDañoZona, cofres, procesarRespawns, updateMovement, actualizarBots, iniciarPartida, equipoInicial, finalizarPartida, iniciarDesdeSala, estadoSala });', sandbox);
   for (const id of Object.keys(game.jugadores)) delete game.jugadores[id];
   // Estas pruebas aíslan combate; la admisión y el inicio real se prueban por red.
@@ -37,8 +37,155 @@ function loadGame() {
     game.iniciarPartida();
   };
   const simulationTick = intervals.at(-1);
-  return { game, messages, tick: simulationTick, now: () => now, advance: (milliseconds) => { now += milliseconds; }, finishTimeouts: () => timeouts.splice(0).forEach((callback) => callback()) };
+  return { game, messages, tick: simulationTick, matchSecond: () => intervals.at(-1)(),
+    now: () => now, advance: (milliseconds) => { now += milliseconds; }, finishTimeouts: () => timeouts.splice(0).forEach((callback) => callback()) };
 }
+
+function revivalGame() {
+  const result = loadGame();
+  const { game, advance } = result;
+  for (const id of ['a', 'b', 'c', 'd']) game.addPlayer(id);
+  game.unirseSala('a', 'A', null, 'nova', { modoArena: 'equipos', cantidadBots: 0 });
+  for (const id of ['b', 'c', 'd']) game.unirseSala(id, id);
+  game.iniciarDesdeSala('a'); advance(4000);
+  game.obstaculos.length = 0; require('../public/js/zones').zones.length = 0;
+  for (const id of ['a', 'b', 'c', 'd']) {
+    Object.assign(game.jugadores[id], { equipo: ['a', 'b'].includes(id) ? 'azul' : 'rojo',
+      x: id === 'c' ? 1000 : id === 'd' ? 2000 : 1140, y: id === 'b' ? 1080 : 1000 });
+  }
+  return result;
+}
+
+test('Abatidos: bala letal conserva inventario, permite arrastrarse y bloquea acciones y curación', () => {
+  const { game, tick, advance } = revivalGame();
+  const victim = game.jugadores.a;
+  const inventory = [...victim.inventario];
+  victim.vida = 1;
+  game.createBullet('c', { x: 1000, y: 1000, angle: 0 });
+  for (let i = 0; i < 3; i += 1) tick();
+  assert.equal(victim.abatido, true);
+  assert.equal(victim.muerto, false);
+  assert.equal(victim.vida, 30);
+  assert.deepEqual([...victim.inventario], inventory);
+  assert.equal(game.estadoEquipos().puntos.rojo, 0);
+  const bullets = game.balas.length, items = game.itemsEnSuelo.length;
+  game.createBullet('a', { x: victim.x, y: victim.y, angle: 0 });
+  game.reloadWeapon('a'); game.dropItem('a');
+  victim.inventario[2] = 'granada';
+  game.processClientMessage('a', { type: 'lanzarGranada', data: { angle: 0 } });
+  assert.equal(game.granadas.length, 0);
+  assert.equal(game.balas.length, bullets);
+  assert.equal(game.itemsEnSuelo.length, items);
+  assert.equal(victim.recargando, false);
+  const x = victim.x, y = victim.y;
+  advance(100); game.updateMovement('a', { x: x + 500, y, angle: 0 });
+  assert.ok(victim.x > x && victim.x - x <= 8.001);
+  require('../public/js/zones').zones.push({ tipo: 'curacion', x: victim.x, y, radio: 100 },
+    { tipo: 'escudo', x: victim.x, y, radio: 100 });
+  for (let i = 0; i < 30; i += 1) game.aplicarZonasEspeciales();
+  assert.equal(victim.vida, 30); assert.equal(victim.escudo, 0);
+});
+
+test('Abatidos: mantener tres segundos levanta con exactamente 25 de vida, sin escudo ni baja', () => {
+  const { game, advance } = revivalGame();
+  game.resolverBaja(game.jugadores.a, game.jugadores.c, 'pistola');
+  for (let i = 0; i <= 30; i += 1) {
+    game.processClientMessage('b', { type: 'reanimar', data: { activo: true, vida: 100, progreso: 1 } });
+    game.procesarAbatidos();
+    if (i < 30) { assert.equal(game.jugadores.a.abatido, true); advance(100); }
+  }
+  assert.equal(game.jugadores.a.abatido, false);
+  assert.equal(game.jugadores.a.vida, 25);
+  assert.equal(game.jugadores.a.escudo, 0);
+  assert.equal(game.estadoEquipos().puntos.rojo, 0);
+});
+
+test('Abatidos: los perdigones del disparo que lo abate no pueden rematarlo inmediatamente', () => {
+  const { game, tick } = revivalGame();
+  const shooter = game.jugadores.c;
+  shooter.inventario[1] = 'escopeta'; shooter.municionPorSlot[1] = 6;
+  game.equiparArma(shooter);
+  Object.assign(game.jugadores.a, { x: 1060, vida: 1 });
+  game.createBullet('c', { x: 1000, y: 1000, angle: 0 });
+  for (let i = 0; i < 10; i += 1) tick();
+  assert.equal(game.jugadores.a.abatido, true);
+  assert.equal(game.jugadores.a.vida, 30);
+  assert.equal(game.estadoEquipos().puntos.rojo, 0);
+});
+
+test('Abatidos: soltar, alejarse o perder conexión cancela el progreso; no se puede levantar enemigos ni a través de paredes', () => {
+  for (const cancel of ['soltar', 'alejarse', 'conexion', 'muro']) {
+    const { game, advance } = revivalGame();
+    const target = game.jugadores.a, rescuer = game.jugadores.b;
+    game.resolverBaja(target, game.jugadores.c, 'rifle');
+    game.reanimar('c', { activo: true }); game.procesarAbatidos();
+    assert.equal(target.reanimadorId, null);
+    game.reanimar('b', { activo: true }); game.procesarAbatidos();
+    advance(200); game.reanimar('b', { activo: true }); game.procesarAbatidos();
+    assert.ok(target.progresoReanimacion > 0);
+    if (cancel === 'soltar') game.reanimar('b', { activo: false });
+    if (cancel === 'alejarse') rescuer.x += 500;
+    if (cancel === 'conexion') advance(400);
+    if (cancel === 'muro') game.obstaculos.push({ tipo: 'roca', x: 1120, y: 1030, width: 40, height: 20 });
+    game.procesarAbatidos();
+    assert.equal(target.progresoReanimacion, 0, cancel);
+    assert.equal(target.abatido, true);
+  }
+});
+
+test('Abatidos: desangrado y remate acreditan una sola baja, después reaparece normalmente', () => {
+  for (const finish of ['tiempo', 'bala', 'granada']) {
+    const { game, advance, tick } = revivalGame();
+    const target = game.jugadores.a;
+    game.resolverBaja(target, game.jugadores.c, 'pistola');
+    if (finish === 'tiempo') { advance(20000); game.procesarAbatidos(); }
+    if (finish === 'bala') {
+      advance(1000);
+      target.vida = 1; game.createBullet('c', { x: 1000, y: 1000, angle: 0 });
+      for (let i = 0; i < 3; i += 1) tick();
+    }
+    if (finish === 'granada') {
+      game.granadas.push({ x: target.x, y: target.y, angle: 0, lanzadorId: 'c', equipo: 'rojo',
+        distancia: 350, explotaEn: 0 });
+      game.procesarGranadas();
+    }
+    assert.equal(target.muerto, true, finish);
+    assert.equal(target.abatido, false);
+    assert.equal(game.estadoEquipos().puntos.rojo, 1);
+    game.procesarAbatidos();
+    assert.equal(game.estadoEquipos().puntos.rojo, 1);
+    advance(3000); game.procesarRespawns();
+    assert.equal(target.muerto, false); assert.equal(target.vida, 100);
+    assert.equal(target.abatido, false);
+  }
+});
+
+test('Abatidos: equipo completo abatido o sin compañero conectado pasa a muerte y reinicia al reaparecer', () => {
+  for (const disconnect of [false, true]) {
+    const { game } = revivalGame();
+    game.resolverBaja(game.jugadores.a, game.jugadores.c, 'rifle');
+    if (disconnect) { game.removePlayer('b'); game.procesarAbatidos(); }
+    else game.resolverBaja(game.jugadores.b, game.jugadores.c, 'rifle');
+    assert.equal(game.jugadores.a.muerto, true);
+    assert.equal(game.estadoEquipos().puntos.rojo, disconnect ? 1 : 2);
+  }
+});
+
+test('Abatidos: bots rescatan compañeros y las zonas letales también abaten sin conceder curación', () => {
+  const { game, advance } = revivalGame();
+  game.jugadores.b.esBot = true;
+  game.jugadores.a.vida = 0.01;
+  require('../public/js/zones').zones.push({ tipo: 'contaminacion', x: 1140, y: 1000, radio: 30 });
+  game.aplicarZonasEspeciales();
+  assert.equal(game.jugadores.a.abatido, true);
+  require('../public/js/zones').zones.length = 0;
+  for (let i = 0; i <= 30; i += 1) {
+    game.actualizarBots(); game.procesarAbatidos();
+    if (i < 30) advance(100);
+  }
+  assert.equal(game.jugadores.a.abatido, false);
+  assert.equal(game.jugadores.a.vida, 25);
+});
 
 test('Resultados incluyen todos los puestos y el reinicio limpia las puntuaciones', () => {
   const { game, messages, finishTimeouts } = loadGame();
@@ -56,6 +203,180 @@ test('Resultados incluyen todos los puestos y el reinicio limpia las puntuacione
   assert.equal(game.estadoSala().anfitrionId, null);
   assert.ok(messages.some(m => m.type === 'reinicioPartida'));
 });
+
+test('Duelo: dos humanos se separan, cuatro quedan 2/2 y los bots también se equilibran', () => {
+  const { game } = loadGame();
+  for (const id of ['a', 'b', 'c', 'd']) game.addPlayer(id);
+  game.unirseSala('a', 'A', null, 'nova', { modoArena: 'equipos', cantidadBots: 5 });
+  game.unirseSala('b', 'B', null, 'pulse', { equipo: game.jugadores.a.equipo, modoArena: 'clasico' });
+  assert.notEqual(game.jugadores.a.equipo, game.jugadores.b.equipo);
+  game.unirseSala('c', 'C'); game.unirseSala('d', 'D');
+  assert.equal(game.estadoSala().jugadores.filter(player => player.equipo === 'azul').length, 2);
+  game.iniciarDesdeSala('a');
+  assert.equal(game.estadoSala().reglas.modoArena, 'equipos');
+  assert.equal(game.tactical(), null);
+  const bots = Object.values(game.jugadores).filter(player => player.esBot);
+  assert.equal(bots.length, 5);
+  assert.ok([2, 3].includes(bots.filter(player => player.equipo === 'azul').length));
+});
+
+test('Duelo: balas y puños atraviesan compañeros sin daño y solo eliminan enemigos', () => {
+  for (const weapon of ['pistola', 'puños']) {
+    const { game, tick, advance } = loadGame();
+    for (const id of ['a', 'b', 'c']) game.addPlayer(id);
+    game.unirseSala('a', 'A', null, 'nova', { modoArena: 'equipos', cantidadBots: 0 });
+    game.unirseSala('b', 'B'); game.unirseSala('c', 'C');
+    game.iniciarDesdeSala('a'); advance(4000);
+    game.obstaculos.length = 0;
+    require('../public/js/zones').zones.length = 0;
+    Object.assign(game.jugadores.a, { equipo: 'azul', x: 1000, y: 1000 });
+    Object.assign(game.jugadores.b, { equipo: 'azul', x: 1060, y: 1000, escudo: 20 });
+    Object.assign(game.jugadores.c, { equipo: 'rojo', x: weapon === 'puños' ? 1080 : 1140, y: 1000, vida: 1 });
+    if (weapon === 'puños') { game.jugadores.a.slotSeleccionado = 0; game.equiparArma(game.jugadores.a); }
+    game.createBullet('a', { x: 1000, y: 1000, angle: 0 });
+    for (let i = 0; i < 5; i += 1) tick();
+    assert.equal(game.jugadores.b.vida, 100);
+    assert.equal(game.jugadores.b.escudo, 20);
+    assert.equal(game.jugadores.c.muerto, true);
+    assert.equal(game.jugadores.a.kills, 1);
+    assert.equal(game.estadoEquipos().puntos.azul, 1);
+    assert.equal(game.estadoEquipos().puntos.rojo, 0);
+  }
+});
+
+test('Duelo: granadas no dañan compañeros ni al lanzador y suman solo bajas enemigas', () => {
+  const { game, advance } = loadGame();
+  for (const id of ['a', 'b', 'c']) game.addPlayer(id);
+  game.unirseSala('a', 'A', null, 'nova', { modoArena: 'equipos', cantidadBots: 0 });
+  game.unirseSala('b', 'B'); game.unirseSala('c', 'C');
+  game.iniciarDesdeSala('a'); advance(4000);
+  for (const id of ['a', 'b', 'c']) Object.assign(game.jugadores[id], { equipo: id === 'c' ? 'rojo' : 'azul', x: 1000, y: 1000 });
+  game.jugadores.c.vida = 1;
+  game.jugadores.a.inventario[2] = 'granada';
+  game.processClientMessage('a', { type: 'lanzarGranada', data: { angle: 0 } });
+  game.granadas[0].x = 1000; game.granadas[0].y = 1000;
+  advance(2000); game.procesarGranadas();
+  assert.equal(game.jugadores.a.vida, 100);
+  assert.equal(game.jugadores.b.vida, 100);
+  assert.equal(game.jugadores.c.muerto, true);
+  assert.equal(game.estadoEquipos().puntos.azul, 1);
+});
+
+test('Duelo: bajas colectivas alcanzan el objetivo aunque nadie lo alcance individualmente', () => {
+  const { game, advance, tick, messages } = loadGame();
+  for (const id of ['a', 'b', 'c']) game.addPlayer(id);
+  game.unirseSala('a', 'A', null, 'nova', { modoArena: 'equipos', cantidadBots: 0, limiteKills: 5 });
+  game.unirseSala('b', 'B'); game.unirseSala('c', 'C');
+  game.iniciarDesdeSala('a'); advance(4000);
+  game.obstaculos.length = 0; require('../public/js/zones').zones.length = 0;
+  Object.assign(game.jugadores.a, { equipo: 'azul', x: 1000, y: 1000 });
+  Object.assign(game.jugadores.b, { equipo: 'azul', x: 1000, y: 1300 });
+  Object.assign(game.jugadores.c, { equipo: 'rojo', x: 1140, y: 1000 });
+  for (let i = 0; i < 5; i += 1) {
+    const shooter = i % 2 ? 'b' : 'a';
+    Object.assign(game.jugadores.c, { muerto: false, vida: 1, y: game.jugadores[shooter].y });
+    game.createBullet(shooter, { x: 1000, y: game.jugadores[shooter].y, angle: 0 });
+    for (let step = 0; step < 3; step += 1) tick();
+    advance(1000);
+  }
+  const final = messages.find(message => message.type === 'configPartida' && message.data.finalizada);
+  assert.equal(final.data.equipos.ganador, 'azul');
+  assert.equal(final.data.equipos.puntos.azul, 5);
+  const results = messages.find(message => message.type === 'finDeJuego').data;
+  assert.equal(results.find(player => player.id === 'a').kills, 3);
+  assert.equal(results.find(player => player.id === 'b').kills, 2);
+  assert.ok(results.every(player => ['azul', 'rojo'].includes(player.equipo)));
+  advance(15000); tick();
+  assert.equal(game.estadoSala().activa, true);
+  assert.equal(game.estadoSala().reglas.modoArena, 'equipos');
+  assert.equal(game.estadoEquipos().puntos.azul, 0);
+  assert.equal(game.estadoEquipos().puntos.rojo, 0);
+});
+
+test('Duelo: las bajas del equipo sobreviven a salida y reingreso sin cambiar de equipo', () => {
+  const { game, advance, tick } = loadGame();
+  for (const id of ['a', 'b']) game.addPlayer(id);
+  game.unirseSala('a', 'A', null, 'nova', { modoArena: 'equipos', cantidadBots: 0 });
+  game.unirseSala('b', 'B'); game.iniciarDesdeSala('a'); advance(4000);
+  const team = game.jugadores.a.equipo;
+  game.obstaculos.length = 0; require('../public/js/zones').zones.length = 0;
+  Object.assign(game.jugadores.a, { x: 1000, y: 1000 });
+  Object.assign(game.jugadores.b, { x: 1140, y: 1000, vida: 1 });
+  game.createBullet('a', { x: 1000, y: 1000, angle: 0 });
+  for (let i = 0; i < 3; i += 1) tick();
+  const client = { emit() {} };
+  game.processClientMessage('a', { type: 'abandonarPartida' }, client);
+  assert.equal(game.estadoEquipos().puntos[team], 1);
+  game.unirseSala('a', 'Cambio', client, 'pulse', { equipo: team === 'azul' ? 'rojo' : 'azul' });
+  assert.equal(game.jugadores.a.equipo, team);
+  assert.equal(game.jugadores.a.kills, 1);
+});
+
+for (const tied of [true, false]) {
+  test(`Duelo: al agotarse el tiempo ${tied ? 'declara empate' : 'gana el equipo con más bajas'}`, () => {
+    const { game, advance, tick, matchSecond, messages } = loadGame();
+    for (const id of ['a', 'b']) game.addPlayer(id);
+    game.unirseSala('a', 'A', null, 'nova', { modoArena: 'equipos', cantidadBots: 0, duracion: 60 });
+    game.unirseSala('b', 'B'); game.iniciarDesdeSala('a'); advance(4000);
+    const team = game.jugadores.a.equipo;
+    if (!tied) {
+      game.obstaculos.length = 0; require('../public/js/zones').zones.length = 0;
+      Object.assign(game.jugadores.a, { x: 1000, y: 1000 });
+      Object.assign(game.jugadores.b, { x: 1140, y: 1000, vida: 1 });
+      game.createBullet('a', { x: 1000, y: 1000, angle: 0 });
+      for (let i = 0; i < 3; i += 1) tick();
+    }
+    for (let i = 0; i < 60; i += 1) matchSecond();
+    const final = messages.find(message => message.type === 'configPartida' && message.data.finalizada);
+    assert.equal(final.data.equipos.ganador, tied ? null : team);
+    assert.equal(final.data.equipos.puntos[team], tied ? 0 : 1);
+    assert.ok(messages.some(message => message.type === 'finDeJuego'));
+  });
+}
+
+test('Duelo: bots ignoran compañeros incluso cuando están más cerca', () => {
+  const { game, advance } = loadGame();
+  game.addPlayer('a'); game.addPlayer('b');
+  game.unirseSala('a', 'A', null, 'nova', { modoArena: 'equipos', cantidadBots: 5 });
+  game.unirseSala('b', 'B'); game.iniciarDesdeSala('a'); advance(4000);
+  game.obstaculos.length = 0; require('../public/js/zones').zones.length = 0;
+  for (const id of ['bot2', 'bot3', 'bot4', 'bot5']) delete game.jugadores[id];
+  Object.assign(game.jugadores.bot1, { equipo: 'azul', x: 1000, y: 1000 });
+  Object.assign(game.jugadores.a, { equipo: 'azul', x: 1050, y: 1000 });
+  Object.assign(game.jugadores.b, { equipo: 'rojo', x: 1000, y: 1200 });
+  game.actualizarBots();
+  assert.ok(game.jugadores.bot1.y > 1000);
+  assert.equal(game.jugadores.bot1.angle, Math.PI / 2);
+  assert.equal(game.balas[0].equipo, 'azul');
+});
+
+for (const map of ['outpost', 'orbital']) {
+  test(`Charcos en ${map}: regeneración autoritativa por segundo, límites, muertos y preparación`, () => {
+    const { game, tick, advance } = loadGame();
+    game.addPlayer('a');
+    game.unirseSala('a', 'A', null, 'nova', { mapa: map, cantidadBots: 0 });
+    game.iniciarDesdeSala('a');
+    const zones = require('../public/js/zones').zones;
+    for (const [type, stat, other] of [['curacion', 'vida', 'escudo'], ['escudo', 'escudo', 'vida']]) {
+      const zone = zones.find(zone => zone.tipo === type);
+      const player = game.jugadores.a;
+      Object.assign(player, { x: zone.x, y: zone.y, vida: 30, escudo: 30, muerto: false });
+      if (type === 'curacion') { tick(); assert.equal(player.vida, 30); }
+      advance(4000);
+      for (let i = 0; i < 30; i += 1) game.aplicarZonasEspeciales();
+      assert.ok(Math.abs(player[stat] - 40) < 0.00001);
+      assert.equal(player[other], 30);
+      for (let i = 0; i < 300; i += 1) game.aplicarZonasEspeciales();
+      assert.equal(player[stat], 100);
+      Object.assign(player, { vida: 0, escudo: 0, muerto: true });
+      game.aplicarZonasEspeciales();
+      assert.equal(player.vida, 0); assert.equal(player.escudo, 0);
+      Object.assign(player, { x: zone.x + zone.radio + 1, vida: 30, escudo: 30, muerto: false });
+      game.aplicarZonasEspeciales();
+      assert.equal(player.vida, 30); assert.equal(player.escudo, 30);
+    }
+  });
+}
 
 test('Modo puzzles integra recompensas, compras, bots y combate sin reponer el equipo comprado', () => {
   const { game, tick, advance } = loadGame();

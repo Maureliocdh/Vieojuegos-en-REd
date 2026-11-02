@@ -23,6 +23,8 @@
       for (const zone of SpecialZones.zones) {
         if (inView && !inView(zone.x, zone.y, zone.radio)) continue;
         const ice = zone.tipo === 'hielo';
+        const healing = zone.tipo === 'curacion', shielding = zone.tipo === 'escudo';
+        const recovery = healing || shielding;
         if (zone.tipo === 'agujeroNegro') {
           context.save();
           context.translate(zone.x, zone.y);
@@ -55,11 +57,11 @@
           context.closePath();
         } else context.arc(zone.x, zone.y, zone.radio, 0, Math.PI * 2);
         const fill = context.createRadialGradient(zone.x, zone.y, 0, zone.x, zone.y, zone.radio);
-        fill.addColorStop(0, ice ? '#d5f8ffff' : '#759b16ee');
-        fill.addColorStop(1, ice ? '#77b9d9cc' : '#344d16dd');
+        fill.addColorStop(0, healing ? '#55efadb8' : shielding ? '#737dffb8' : ice ? '#d5f8ffff' : '#759b16ee');
+        fill.addColorStop(1, healing ? '#116d4cbb' : shielding ? '#302b8fbb' : ice ? '#77b9d9cc' : '#344d16dd');
         context.fillStyle = fill;
         context.fill();
-        context.strokeStyle = ice ? '#e4ffff' : '#d6ed59';
+        context.strokeStyle = healing ? '#a4ffcf' : shielding ? '#bcbaff' : ice ? '#e4ffff' : '#d6ed59';
         context.lineWidth = 4;
         context.lineJoin = "round";
         context.stroke();
@@ -69,7 +71,11 @@
           const x = zone.x - zone.radio + (i * 113 % (zone.radio * 2));
           const y = zone.y - zone.radio + (i * 173 % (zone.radio * 2));
           context.beginPath();
-          if (ice) {
+          if (recovery) {
+            const pulse = 0.5 + 0.3 * Math.sin(performance.now() / 700 + i);
+            context.globalAlpha = pulse;
+            context.moveTo(x - 15, y); context.quadraticCurveTo(x, y - 10, x + 20, y);
+          } else if (ice) {
             context.moveTo(x - 18, y - 12); context.lineTo(x, y); context.lineTo(x - 8, y + 20);
             context.moveTo(x, y); context.lineTo(x + 22, y - 6);
           } else {
@@ -79,6 +85,22 @@
             context.fill();
           }
           context.stroke();
+        }
+        if (recovery) {
+          context.globalAlpha = 1;
+          context.fillStyle = healing ? '#e0ffef' : '#ebeaff';
+          context.strokeStyle = healing ? '#e0ffef' : '#ebeaff';
+          context.lineWidth = 5;
+          if (healing) {
+            context.fillRect(zone.x - 6, zone.y - 22, 12, 44);
+            context.fillRect(zone.x - 22, zone.y - 6, 44, 12);
+          } else {
+            context.beginPath();
+            context.moveTo(zone.x, zone.y - 26); context.lineTo(zone.x + 22, zone.y - 17);
+            context.lineTo(zone.x + 18, zone.y + 9); context.lineTo(zone.x, zone.y + 27);
+            context.lineTo(zone.x - 18, zone.y + 9); context.lineTo(zone.x - 22, zone.y - 17);
+            context.closePath(); context.stroke();
+          }
         }
         context.restore();
       }

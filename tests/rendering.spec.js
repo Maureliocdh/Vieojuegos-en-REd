@@ -1,5 +1,33 @@
 const { test, expect } = require('@playwright/test');
 
+test('Mira centrada en el canvas sin cambiar cursores de menús ni coordenadas de apuntado', async ({ page }) => {
+  const response = await page.request.get('/assets/crosshair.svg');
+  expect(response.ok()).toBe(true);
+  expect(response.headers()['content-type']).toContain('image/svg+xml');
+  await page.goto('/');
+  await expect(page.locator('#jugar-button')).toBeEnabled();
+  const result = await page.evaluate(async () => {
+    const image = new Image();
+    image.src = '/assets/crosshair.svg';
+    await image.decode();
+    const bounds = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: bounds.left + 123, clientY: bounds.top + 234 }));
+    return {
+      cursor: getComputedStyle(canvas).cursor,
+      menu: getComputedStyle(inicioScreen).cursor,
+      button: getComputedStyle(playButton).cursor,
+      width: image.naturalWidth, height: image.naturalHeight,
+      aim: { x: mouse.x, y: mouse.y },
+    };
+  });
+  expect(result.cursor).toMatch(/crosshair\.svg"\) 16 16, crosshair$/);
+  expect(result.menu).toBe('auto');
+  expect(result.button).toBe('pointer');
+  expect(result.width).toBe(32);
+  expect(result.height).toBe(32);
+  expect(result.aim).toEqual({ x: 123, y: 234 });
+});
+
 test('Render omite objetos fuera de cámara y conserva el borde visible', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#jugar-button')).toBeEnabled();

@@ -82,8 +82,10 @@ test('Estación: tres agujeros negros dañan, tres zonas de hielo mantienen su l
     for (const zone of areas) {
       assert.ok(rooms.some(room => zone.x - zone.radio > room.x + 18 && zone.x + zone.radio < room.x + room.width - 18
         && zone.y - zone.radio > room.y + 18 && zone.y + zone.radio < room.y + room.height - 18));
-      assert.deepEqual(Zones.effects(zone, [zone]), zone.tipo === 'hielo'
-        ? { damagePerSecond: 0, speedMultiplier: 0.6 } : { damagePerSecond: 5, speedMultiplier: 1 });
+      assert.deepEqual(Zones.effects(zone, [zone]), {
+        damagePerSecond: zone.tipo === 'agujeroNegro' ? 5 : 0, speedMultiplier: zone.tipo === 'hielo' ? 0.6 : 1,
+        healPerSecond: zone.tipo === 'curacion' ? 10 : 0, shieldPerSecond: zone.tipo === 'escudo' ? 10 : 0,
+      });
     }
   }
 });

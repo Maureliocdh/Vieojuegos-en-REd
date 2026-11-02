@@ -3,6 +3,7 @@ const { Tactical } = require('./lib/tactical');
 const { MapVote } = require('./lib/map-vote');
 const { Navigation } = require('./lib/navigation');
 const Maps = require('./public/js/maps');
+const Teams = require('./public/js/teams');
 const express = require('express');
 const http = require('http');
 const { skins } = require('./public/js/assets.js');
@@ -175,6 +176,7 @@ function sendToClient(client, type, data) {
 
 /** Difunde un evento usando el transporte activo. */
 function broadcast(type, data) {
+  if (type === 'estadoJuego' || type === 'inicioPartida') data = { ...data, equipos: estadoEquipos() };
   if (preparacionTactica && ['estadoJuego', 'inicioPartida'].includes(type)) {
     const clients = nativeMode ? wss.clients : io.sockets?.sockets.values() || [];
     for (const client of clients) {
@@ -197,6 +199,110 @@ function broadcast(type, data) {
 
 let anfitrionId = null;
 let opcionesSala = {};
+let puntosEquipos = { azul: 0, rojo: 0 };
+const esDueloEquipos = () => opcionesSala.modoArena === 'equipos';
+function estadoEquipos() {
+  return esDueloEquipos() ? { puntos: { ...puntosEquipos }, limite: limiteKills,
+    ganador: partidaFinalizada ? Teams.winner(puntosEquipos) : null, finalizada: partidaFinalizada } : null;
+}
+function equilibrarEquipos() {
+  const unidos = Object.values(jugadores).filter(jugador => jugador.unido);
+  if (esDueloEquipos()) Teams.balance(unidos);
+  else for (const jugador of Object.values(jugadores)) jugador.equipo = null;
+}
+function registrarBaja(autor, victima, arma) {
+  if (!autor || (esDueloEquipos() && (autor === victima || Teams.same(autor, victima)))) return false;
+  autor.kills += 1;
+  if (esDueloEquipos()) puntosEquipos[autor.equipo] += 1;
+  broadcast('kill', { asesino: autor.nombre, victima: victima.nombre, arma });
+  if ((esDueloEquipos() ? puntosEquipos[autor.equipo] : autor.kills) < limiteKills) return false;
+  finalizarPartida();
+  return true;
+}
+function limpiarAbatido(jugador) {
+  jugador.abatido = false;
+  jugador.abatidoHasta = 0;
+  jugador.abatidoDesde = 0;
+  jugador.autorAbatidoId = null;
+  jugador.armaAbatido = null;
+  jugador.reanimadorId = null;
+  jugador.reanimacionDesde = 0;
+  jugador.progresoReanimacion = 0;
+  jugador.reanimando = null;
+  jugador.reanimarHasta = 0;
+}
+function eliminarJugador(jugador, autor = null, arma = null) {
+  const responsable = autor || jugadores[jugador.autorAbatidoId];
+  if (registrarBaja(responsable, jugador, arma || jugador.armaAbatido)) return true;
+  respawn(jugador, responsable);
+  return false;
+}
+function resolverBaja(jugador, autor = null, arma = null) {
+  if (!esDueloEquipos()) return eliminarJugador(jugador, autor, arma);
+  if (jugador.abatido) return eliminarJugador(jugador, autor, arma);
+  jugador.abatido = true;
+  jugador.abatidoDesde = Date.now();
+  jugador.abatidoHasta = jugador.abatidoDesde + 20000;
+  jugador.autorAbatidoId = Object.keys(jugadores).find(id => jugadores[id] === autor) || null;
+  jugador.armaAbatido = arma;
+  jugador.vida = 30;
+  jugador.escudo = 0;
+  jugador.recargando = false;
+  jugador.recargaId = (jugador.recargaId || 0) + 1;
+  jugador.reanimando = null;
+  return procesarEquiposAbatidos();
+}
+function procesarEquiposAbatidos() {
+  if (!esDueloEquipos()) return false;
+  for (const equipo of Object.keys(Teams.catalog)) {
+    const vivos = Object.values(jugadores).filter(j => j.unido && !j.muerto && j.equipo === equipo);
+    if (!vivos.length || vivos.some(j => !j.abatido)) continue;
+    for (const jugador of vivos) if (eliminarJugador(jugador)) return true;
+  }
+  return false;
+}
+function puedeReanimar(autor, objetivo) {
+  return Teams.canRevive(autor, objetivo, obstaculos.flatMap(Buildings.walls));
+}
+function reanimar(id, { activo } = {}) {
+  const autor = jugadores[id];
+  if (!autor) return;
+  if (activo !== true || !esDueloEquipos()) { autor.reanimando = null; autor.reanimarHasta = 0; return; }
+  const objetivo = Object.entries(jugadores).filter(([, j]) => puedeReanimar(autor, j))
+    .sort(([, a], [, b]) => Math.hypot(autor.x - a.x, autor.y - a.y) - Math.hypot(autor.x - b.x, autor.y - b.y))[0];
+  autor.reanimando = objetivo?.[0] || null;
+  autor.reanimarHasta = Date.now() + 350;
+}
+function procesarAbatidos() {
+  const ahora = Date.now();
+  for (const [id, jugador] of Object.entries(jugadores)) {
+    if (jugador.reanimando && (ahora > jugador.reanimarHasta
+      || !puedeReanimar(jugador, jugadores[jugador.reanimando]))) jugador.reanimando = null;
+    if (!jugador.unido || jugador.muerto || !jugador.abatido) continue;
+    if (ahora >= jugador.abatidoHasta) {
+      if (eliminarJugador(jugador)) return true;
+      continue;
+    }
+    const rescata = Object.entries(jugadores).find(([key, j]) => key === jugador.reanimadorId
+      && j.reanimando === id && ahora <= j.reanimarHasta && puedeReanimar(j, jugador))
+      || Object.entries(jugadores).find(([, j]) => j.reanimando === id
+        && ahora <= j.reanimarHasta && puedeReanimar(j, jugador));
+    if (!rescata) {
+      jugador.reanimadorId = null; jugador.reanimacionDesde = 0; jugador.progresoReanimacion = 0;
+      continue;
+    }
+    if (jugador.reanimadorId !== rescata[0]) {
+      jugador.reanimadorId = rescata[0]; jugador.reanimacionDesde = ahora;
+    }
+    jugador.progresoReanimacion = Math.min(1, (ahora - jugador.reanimacionDesde) / 3000);
+    if (jugador.progresoReanimacion >= 1) {
+      limpiarAbatido(jugador);
+      jugador.vida = 25; jugador.escudo = 0;
+      rescata[1].reanimando = null;
+    }
+  }
+  return procesarEquiposAbatidos();
+}
 let finPreparacion = 0;
 let preparacionTactica = null;
 let botsCompraron = false;
@@ -237,9 +343,9 @@ function actualizarPreparacionTactica() {
 function estadoSala() {
   return { anfitrionId, activa: partidaEnCurso, finalizada: partidaFinalizada, votacion: votacionMapa?.snapshot(Date.now()) ?? null,
     mapaSiguiente, reingresos: [...jugadoresAusentes.keys()],
-    reglas: opcionesSala, jugadores: Object.entries(jugadores)
+    reglas: opcionesSala, equipos: estadoEquipos(), jugadores: Object.entries(jugadores)
       .filter(([, j]) => j.unido && !j.esBot)
-      .map(([id, j]) => ({ id, nombre: j.nombre, skin: j.skin })) };
+      .map(([id, j]) => ({ id, nombre: j.nombre, skin: j.skin, equipo: j.equipo ?? null })) };
 }
 function publicarSala() { broadcast('estadoSala', estadoSala()); }
 function iniciarDesdeSala(id) {
@@ -249,6 +355,7 @@ function iniciarDesdeSala(id) {
   for (const jugador of Object.values(jugadores)) {
     if (!jugador.unido) continue;
     jugador.muerto = false;
+    limpiarAbatido(jugador);
     jugador.vida = 100;
     jugador.escudo = 0;
     jugador.kills = 0;
@@ -265,7 +372,8 @@ function iniciarDesdeSala(id) {
 function reglasPartida() {
   return { limiteKills, duracion: duracionPartida, cantidadBots, dificultadBots, mapa: mapaActual, mapaSiguiente,
     votacionActiva: !!votacionMapa && !votacionMapa.ganador,
-    soloJugador: modoSoloJugador, modoArena: opcionesSala.modoArena || 'clasico', activa: partidaEnCurso, finalizada: partidaFinalizada };
+    soloJugador: modoSoloJugador, modoArena: opcionesSala.modoArena || 'clasico', equipos: estadoEquipos(),
+    activa: partidaEnCurso, finalizada: partidaFinalizada };
 }
 
 function configMapa() {
@@ -351,6 +459,8 @@ function iniciarPartida(opciones = {}) {
     cantidadBots = nuevosBots;
     for (let index = 1; index <= cantidadBots; index += 1) generarBot(`bot${index}`);
   }
+  puntosEquipos = { azul: 0, rojo: 0 };
+  equilibrarEquipos();
   partidaEnCurso = true;
   tiempoRestante = duracionPartida;
   broadcast('configPartida', reglasPartida());
@@ -382,7 +492,8 @@ function finalizarPartida() {
   const podio = Object.entries(jugadores)
     .filter(([, jugador]) => jugador.unido)
     .sort(([, first], [, second]) => (second.kills || 0) - (first.kills || 0))
-    .map(([id, jugador]) => ({ id, nombre: jugador.nombre, skin: jugador.skin, esBot: jugador.esBot, kills: jugador.kills || 0 }));
+    .map(([id, jugador]) => ({ id, nombre: jugador.nombre, skin: jugador.skin, esBot: jugador.esBot,
+      equipo: jugador.equipo ?? null, kills: jugador.kills || 0 }));
   broadcast('finDeJuego', podio);
 
   votacionMapa = new MapVote(podio.filter(jugador => !jugador.esBot).map(jugador => jugador.id), mapaActual, Date.now());
@@ -399,6 +510,7 @@ function reiniciarMundo() {
       jugador.escudo = 0;
       jugador.kills = 0;
       jugador.muerto = false;
+      limpiarAbatido(jugador);
       jugador.recargando = false;
       jugador.recargaId = (jugador.recargaId || 0) + 1;
       jugador.reservas = nuevasReservas();
@@ -425,6 +537,8 @@ function reiniciarMundo() {
     modoSoloJugador = false;
     anfitrionId = null;
     opcionesSala = {};
+    puntosEquipos = { azul: 0, rojo: 0 };
+    for (const jugador of Object.values(jugadores)) jugador.equipo = null;
     finPreparacion = 0;
     preparacionTactica = null;
     botsCompraron = false;
@@ -485,7 +599,7 @@ function unirseJugador(id, nombre, client = null, skin = 'pulse', opciones = {})
       cantidadBots: [0,5,11,15,20].includes(opciones.cantidadBots) ? opciones.cantidadBots : 11,
       dificultadBots: validarDificultad(opciones.dificultadBots),
       soloJugador: opciones.soloJugador === true,
-      modoArena: opciones.soloJugador !== true && opciones.modoArena === 'puzzles' ? 'puzzles' : 'clasico',
+      modoArena: opciones.soloJugador !== true && ['puzzles', 'equipos'].includes(opciones.modoArena) ? opciones.modoArena : 'clasico',
     };
     broadcast('configMapa', configMapa());
     broadcast('configPartida', reglasPartida());
@@ -495,6 +609,7 @@ function unirseJugador(id, nombre, client = null, skin = 'pulse', opciones = {})
   jugador.skin = skins.some((candidate) => candidate.id === skin) ? skin : 'pulse';
   jugador.unido = true;
   equipoInicial(jugador);
+  equilibrarEquipos();
   publicarSala();
   // Asigna posición dentro de la zona segura al unirse
   const spawn = obtenerPosicionSpawn();
@@ -585,7 +700,7 @@ function equiparArma(jugador) {
 /** Inicia una recarga para humanos y bots, evitando dobles temporizadores. */
 function iniciarRecarga(id) {
   const jugador = jugadores[id];
-  if (!jugador || jugador.muerto || jugador.recargando) return;
+  if (!jugador || jugador.muerto || jugador.abatido || jugador.reanimando || jugador.recargando) return;
   const arma = armaActual(jugador);
   const slot = jugador.slotSeleccionado;
   const stats = STATS_ARMAS[arma];
@@ -684,6 +799,7 @@ function removePlayer(id, conservar = false) {
     anfitrionId = Object.keys(jugadores).find(key => jugadores[key].unido && !jugadores[key].esBot) || null;
     if (!anfitrionId) opcionesSala = {};
   }
+  if (!partidaEnCurso) equilibrarEquipos();
   publicarSala();
   broadcast('jugadorDesconectado', id);
   console.log(`Desconectado: ${id}`);
@@ -715,7 +831,7 @@ function updateMovement(id, { x, y, angle } = {}) {
   const ahora = Date.now();
   const elapsed = Math.max(0, Math.min(0.1, (ahora - (tiemposMovimiento.get(jugador) ?? ahora - 1000 / TICK_RATE)) / 1000));
   tiemposMovimiento.set(jugador, ahora);
-  const multiplier = SpecialZones.effects(jugador).speedMultiplier;
+  const multiplier = SpecialZones.effects(jugador).speedMultiplier * (jugador.abatido ? 0.2 : 1);
   if (multiplier < 1) {
     const distance = Math.hypot(x - jugador.x, y - jugador.y);
     const limit = 400 * multiplier * elapsed;
@@ -730,6 +846,7 @@ function updateMovement(id, { x, y, angle } = {}) {
 
 function createBullet(id, { x, y, angle } = {}) {
   if (!partidaEnCurso || !jugadores[id] || jugadores[id].muerto
+    || jugadores[id].abatido || jugadores[id].reanimando
     || (!jugadores[id].esBot && !jugadores[id].unido)
     || ![x, y, angle].every(Number.isFinite)) return;
   const jugador = jugadores[id];
@@ -774,6 +891,8 @@ function createBullet(id, { x, y, angle } = {}) {
       rango: stats.rango,
       distanciaRecorrida: 0,
       arma: nombreArma,
+      disparoEn: ahora,
+      equipo: jugador.equipo ?? null,
       // ID común para Socket.IO y WebSocket nativo; se usa al confirmar una baja.
       propietarioId: id,
       // Alias temporal para compatibilidad con balas creadas por una versión anterior.
@@ -783,7 +902,8 @@ function createBullet(id, { x, y, angle } = {}) {
 }
 
 function selectInventorySlot(id, { slot } = {}) {
-  if (!jugadores[id] || jugadores[id].muerto || !Number.isInteger(slot) || slot < 0 || slot >= INVENTARIO_SIZE) return;
+  if (!jugadores[id] || jugadores[id].muerto || jugadores[id].abatido || jugadores[id].reanimando
+    || !Number.isInteger(slot) || slot < 0 || slot >= INVENTARIO_SIZE) return;
   jugadores[id].slotSeleccionado = slot;
   equiparArma(jugadores[id]);
 }
@@ -794,7 +914,7 @@ function reloadWeapon(id) {
 
 function interactuar(id) {
   const jugador = jugadores[id];
-  if (!jugador?.unido || jugador.muerto) return;
+  if (!jugador?.unido || jugador.muerto || jugador.abatido || jugador.reanimando) return;
   const cofre = cofres.find((candidate) => !candidate.abierto && Math.hypot(jugador.x - candidate.x, jugador.y - candidate.y) <= 105);
   if (cofre) {
     cofre.abierto = true;
@@ -823,7 +943,7 @@ function interactuar(id) {
 /** Intercambia el objeto del slot seleccionado por el botín de una plataforma cercana. */
 function exchangeWithPlatform(id) {
   const jugador = jugadores[id];
-  if (!jugador || jugador.muerto) return;
+  if (!jugador || jugador.muerto || jugador.abatido || jugador.reanimando) return;
 
   const plataforma = plataformas.find((candidate) => (
     candidate.objeto !== null
@@ -854,7 +974,7 @@ function exchangeWithPlatform(id) {
 
 function dropItem(id, { slot } = {}) {
   const jugador = jugadores[id];
-  if (!jugador || jugador.muerto) return;
+  if (!jugador || jugador.muerto || jugador.abatido || jugador.reanimando) return;
   const slotIndex = typeof slot === 'number' ? slot : jugador.slotSeleccionado;
   if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= INVENTARIO_SIZE) return;
   const item = jugador.inventario[slotIndex];
@@ -898,6 +1018,7 @@ function processClientMessage(id, message, client = null) {
   if (message.type === 'unirse') unirseJugador(id, message.data?.nombre, client, message.data?.skin, message.data);
   if (!partidaEnCurso || Date.now() < finPreparacion || !jugadores[id]?.unido) return;
   if (message.type === 'movimiento') updateMovement(id, message.data);
+  if (message.type === 'reanimar') reanimar(id, message.data);
   if (message.type === 'disparar') createBullet(id, message.data);
   if (message.type === 'cambiarSlot') selectInventorySlot(id, message.data);
   if (message.type === 'intercambiar') interactuar(id);
@@ -947,7 +1068,7 @@ if (nativeMode) {
     sendToClient(socket, 'configPartida', reglasPartida());
     sendToClient(socket, 'estadoSala', estadoSala());
 
-    for (const type of ['votarMapa', 'abandonarPartida', 'moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada']) {
+    for (const type of ['votarMapa', 'abandonarPartida', 'moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada', 'reanimar']) {
       socket.on(type, (data) => processClientMessage(id, { type, data }, socket));
     }
     socket.on('disconnect', () => removePlayer(id));
@@ -955,6 +1076,7 @@ if (nativeMode) {
 }
 
 function respawn(jugador, asesino = null) {
+  limpiarAbatido(jugador);
   // Suelta todo el inventario en el suelo antes de morir.
   for (const [slot, item] of jugador.inventario.entries()) {
     if (!item || item === 'puños') continue;
@@ -1024,13 +1146,20 @@ function actualizarBots() {
   if (!partidaEnCurso) return;
   const dificultad = BOT_DIFFICULTIES[dificultadBots];
   for (const [botId, bot] of Object.entries(jugadores)) {
-    if (!bot.esBot || bot.muerto || bot.vida <= 0) continue;
+    if (!bot.esBot || !bot.unido || bot.muerto || bot.abatido || bot.vida <= 0) continue;
 
-    let objetivo = null;
-    let distanciaObjetivo = Infinity;
+    let objetivo = esDueloEquipos() ? Object.values(jugadores).filter(j => j.unido && j.abatido && !j.muerto
+      && Teams.same(bot, j) && Math.hypot(bot.x - j.x, bot.y - j.y) < 900)
+      .sort((a, b) => Math.hypot(bot.x - a.x, bot.y - a.y) - Math.hypot(bot.x - b.x, bot.y - b.y))[0] : null;
+    const rescatando = !!objetivo;
+    let distanciaObjetivo = objetivo ? Math.hypot(bot.x - objetivo.x, bot.y - objetivo.y) : Infinity;
+    if (rescatando && puedeReanimar(bot, objetivo)) { reanimar(botId, { activo: true }); continue; }
+    bot.reanimando = null;
     for (const [id, candidato] of Object.entries(jugadores)) {
+      if (rescatando) break;
       // Ahora los bots pueden elegir como objetivo a humanos u otros bots.
-      if (id === botId || !candidato.unido || candidato.muerto || candidato.vida <= 0) continue;
+      if (id === botId || !candidato.unido || candidato.muerto || candidato.vida <= 0
+        || (esDueloEquipos() && Teams.same(bot, candidato))) continue;
       if (Buildings.concealed(obstaculos, candidato, bot)) continue;
       const distancia = Math.hypot(candidato.x - bot.x, candidato.y - bot.y);
       if (distancia < distanciaObjetivo) {
@@ -1072,7 +1201,7 @@ function actualizarBots() {
     bot.angle = Math.atan2(dy, dx);
 
     // Se acerca sin abandonar los límites del mapa.
-    if (distanciaObjetivo > 55) {
+    if (distanciaObjetivo > 55 || rescatando) {
       let destino = objetivo;
       if (navegacion) {
         for (const edificio of obstaculos.filter(Buildings.isBuilding)) {
@@ -1100,7 +1229,7 @@ function actualizarBots() {
 
     // Reutiliza la misma lógica de disparo, cooldown y dispersión que un humano.
     const cuerpoACuerpo = armaActual(bot) === 'puños';
-    if (distanciaObjetivo < (cuerpoACuerpo ? 100 : dificultad.alcance)) {
+    if (!rescatando && distanciaObjetivo < (cuerpoACuerpo ? 100 : dificultad.alcance)) {
       if (!cuerpoACuerpo && bot.balasEnCargador <= 0) {
         iniciarRecarga(botId);
         continue;
@@ -1115,7 +1244,7 @@ function actualizarBots() {
 
 function lanzarGranada(id, { angle } = {}) {
   const jugador = jugadores[id];
-  if (!jugador || jugador.muerto || !partidaEnCurso) return;
+  if (!jugador || jugador.muerto || jugador.abatido || jugador.reanimando || !partidaEnCurso) return;
   if (!Number.isFinite(angle)) return;
   const slotGranada = jugador.inventario.indexOf('granada');
   if (slotGranada === -1) return;
@@ -1132,6 +1261,7 @@ function lanzarGranada(id, { angle } = {}) {
     y: jugador.y + Math.sin(angle) * MUZZLE_OFFSET,
     angle,
     lanzadorId: id,
+    equipo: jugador.equipo ?? null,
     explotaEn: ahora + GRANADA_FUZE,
     distancia: 0,
   });
@@ -1152,7 +1282,8 @@ function procesarGranadas() {
     if (!explotaPorDistancia && !explotaPorTiempo) continue;
     // Explosión: daña a todos los jugadores en el radio.
     for (const [jid, jugador] of Object.entries(jugadores)) {
-      if (jugador.muerto || !jugador.unido) continue;
+      if (jugador.muerto || !jugador.unido
+        || (esDueloEquipos() && (jid === g.lanzadorId || Teams.same({ equipo: g.equipo }, jugador)))) continue;
       const dist = Math.hypot(jugador.x - g.x, jugador.y - g.y);
       if (dist > GRANADA_RADIO_EXPLOSION) continue;
       const daño = Math.round(GRANADA_DAÑO * (1 - dist / GRANADA_RADIO_EXPLOSION));
@@ -1162,12 +1293,7 @@ function procesarGranadas() {
       jugador.escudo = Math.max(0, jugador.escudo);
       if (jugador.vida <= 0) {
         const lanzador = jugadores[g.lanzadorId];
-        if (lanzador) {
-          lanzador.kills += 1;
-          broadcast('kill', { asesino: lanzador.nombre, victima: jugador.nombre, arma: 'granada' });
-          if (lanzador.kills >= limiteKills) { finalizarPartida(); return; }
-        }
-        respawn(jugador, lanzador);
+        if (resolverBaja(jugador, lanzador, 'granada')) return;
       }
     }
     broadcast('explosion', { x: g.x, y: g.y, radio: GRANADA_RADIO_EXPLOSION });
@@ -1186,8 +1312,7 @@ function aplicarDañoZona() {
     if (dist > zonaSegura.radio) {
       jugador.vida -= zonaSegura.dañoPorSegundo;
       if (jugador.vida <= 0) {
-        jugador.vida = 0;
-        respawn(jugador);
+        if (resolverBaja(jugador)) return;
       }
     }
   }
@@ -1208,10 +1333,12 @@ function aplicarZonasEspeciales() {
   if (!partidaEnCurso) return;
   for (const jugador of Object.values(jugadores)) {
     if (jugador.muerto || !jugador.unido) continue;
-    const damage = SpecialZones.effects(jugador).damagePerSecond / TICK_RATE;
-    if (!damage) continue;
-    jugador.vida = Math.max(0, jugador.vida - damage);
-    if (jugador.vida <= 0) respawn(jugador);
+    const effects = SpecialZones.effects(jugador);
+    jugador.vida = Math.max(0, jugador.vida - effects.damagePerSecond / TICK_RATE);
+    if (jugador.vida <= 0) { if (resolverBaja(jugador)) return; continue; }
+    if (jugador.abatido) continue;
+    jugador.vida = Math.min(100, jugador.vida + effects.healPerSecond / TICK_RATE);
+    jugador.escudo = Math.min(100, jugador.escudo + effects.shieldPerSecond / TICK_RATE);
   }
 }
 
@@ -1225,11 +1352,14 @@ setInterval(() => {
     return;
   }
   actualizarZonaSegura();
+  if (procesarAbatidos()) return;
   procesarRespawns();
   aplicarZonasEspeciales();
+  if (!partidaEnCurso) return;
   actualizarBots();
   procesarGranadas();
   aplicarDañoZona();
+  if (!partidaEnCurso) return;
 
   for (let index = balas.length - 1; index >= 0; index -= 1) {
     const bala = balas[index];
@@ -1253,7 +1383,9 @@ setInterval(() => {
     for (const id in jugadores) {
       const propietarioId = bala.propietarioId || bala.ownerId;
       const jugador = jugadores[id];
-      if (id === propietarioId || jugador.muerto || !jugador.unido) continue;
+      if (id === propietarioId || jugador.muerto || !jugador.unido
+        || (jugador.abatido && bala.disparoEn <= jugador.abatidoDesde)
+        || (esDueloEquipos() && Teams.same({ equipo: bala.equipo }, jugador))) continue;
       if (Math.hypot(bala.x - jugador.x, bala.y - jugador.y) <= HIT_RADIUS) {
         balas.splice(index, 1);
         // El escudo absorbe primero el daño; solo el excedente llega a la vida.
@@ -1264,12 +1396,7 @@ setInterval(() => {
         jugador.escudo = Math.max(0, jugador.escudo);
         if (jugador.vida <= 0) {
           const propietario = jugadores[propietarioId];
-          if (propietario) {
-            propietario.kills += 1;
-            broadcast('kill', { asesino: propietario.nombre, victima: jugador.nombre, arma: armaActual(propietario) });
-            if (propietario.kills >= limiteKills) { finalizarPartida(); return; }
-          }
-          respawn(jugador, propietario);
+          if (resolverBaja(jugador, propietario, bala.arma)) return;
         }
         break;
       }
@@ -1279,7 +1406,7 @@ setInterval(() => {
   // Recogida autoritativa: el servidor decide si hay espacio y vacía la plataforma.
   for (const id in jugadores) {
     const jugador = jugadores[id];
-    if (!partidaEnCurso || !jugador.unido) continue;
+    if (!partidaEnCurso || !jugador.unido || jugador.abatido || jugador.reanimando) continue;
     for (const plataforma of plataformas) {
       if (plataforma.objeto === null || jugador.muerto) continue;
       if (Math.hypot(jugador.x - plataforma.x, jugador.y - plataforma.y) > PLATFORM_RADIUS) continue;
