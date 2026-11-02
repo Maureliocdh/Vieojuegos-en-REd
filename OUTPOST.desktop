@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=OUTPOST
+Comment=Iniciar OUTPOST con Socket.IO o WebSocket nativo
+Exec="/home/amentum/Escritorio/juegos/Vieojuegos-en-REd/iniciar-linux.sh"
+Terminal=true
+Icon=applications-games
+Categories=Game;

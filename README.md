@@ -85,6 +85,37 @@ Para la explicación técnica y preguntas de exposición, consulta la [guía de 
 
 El cliente consulta `/modo` y elige automáticamente el adaptador correcto. No necesitas modificar el HTML para cambiar de modo.
 
+### Lanzadores para Linux y Windows
+
+Con Node.js y npm instalados:
+
+- **Linux:** haz doble clic en `OUTPOST.desktop`. Si el gestor de archivos lo pide, selecciona **Permitir iniciar** o márcalo como confiable. También puedes ejecutar `./iniciar-linux.sh` desde una terminal.
+- **Windows:** haz doble clic en `iniciar-windows.bat` o ejecútalo desde una terminal.
+
+Ambos muestran un menú: **1** inicia Socket.IO, **2** inicia WebSocket nativo y **0** sale. Instalan las dependencias con `npm ci` si faltan (necesitas Internet en ese caso), inician el servidor y abren automáticamente el navegador cuando el servidor responde correctamente. Mantén la terminal abierta y usa **Ctrl+C** para detenerlo. Si el navegador no puede abrirse, se muestra la dirección para abrirla manualmente.
+
+Conserva los lanzadores dentro de la carpeta del proyecto; no son ejecutables autónomos ni incluyen Node.js. El acceso `OUTPOST.desktop` apunta a la ubicación actual: si mueves el proyecto, actualiza su campo `Exec` con la ruta absoluta de `iniciar-linux.sh`. Para llevar el proyecto a otro sistema, copia el proyecto sin `node_modules`; el lanzador instalará las dependencias allí. Para iniciar sin abrir navegador, usa `node iniciar.js --sin-navegador` (añade `--nativo` para WebSocket).
+
+#### Lanzadores directos de Linux
+
+Con Node.js instalado y las dependencias preparadas mediante `npm ci`, puedes usar:
+
+```sh
+./iniciar-socketio.sh
+# O bien:
+./iniciar-websocket.sh
+```
+
+Los dos archivos tienen permiso de ejecución y localizan el proyecto aunque los ejecutes desde otra carpeta. Abren el servidor en **http://localhost:3000**; mantén la terminal abierta y pulsa **Ctrl+C** para detenerlo. No son binarios autónomos: necesitan Node.js y las dependencias del proyecto.
+
+Para ejecutar ambos a la vez, usa dos terminales y puertos distintos:
+
+```sh
+./iniciar-socketio.sh
+# En otra terminal:
+PORT=3001 ./iniciar-websocket.sh
+```
+
 **Los dos modos usan las mismas reglas, pero son alternativas de ejecución.** Dos procesos en puertos distintos tienen partidas independientes; para jugar juntos hay que conectarse a la misma dirección y puerto.
 
 ### Cambiar el Puerto en PowerShell
