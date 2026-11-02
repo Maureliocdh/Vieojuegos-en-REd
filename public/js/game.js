@@ -224,6 +224,8 @@ const waitingScreen = document.getElementById('pantalla-espera');
 network.on('estadoSala', (room) => {
   currentRoom = room;
   if (resultsPinned) return;
+  for (const tab of document.querySelectorAll('[data-mode]')) tab.disabled = !!room.anfitrionId || room.activa;
+  if (room.anfitrionId) window.selectArenaMode(room.reglas.soloJugador ? 'solo' : room.reglas.modoArena || 'clasico', false);
   const member = room.jugadores.some(j => j.id === network.id);
   if (room.activa || room.finalizada) {
     waitingScreen.hidden = true;
@@ -267,7 +269,7 @@ network.on('estadoSala', (room) => {
   document.getElementById('start-match').hidden = !host;
   document.getElementById('close-room').hidden = !host;
   document.getElementById('room-status').textContent = host ? 'Confirma que están todos y pulsa Iniciar partida.' : 'Esperando a que el anfitrión inicie la partida…';
-  document.getElementById('room-rules').textContent = room.jugadores.length + ' jugadores · ' + room.reglas.cantidadBots + ' bots · ' + room.reglas.limiteKills + ' bajas · ' + room.reglas.duracion / 60 + ' min';
+  document.getElementById('room-rules').textContent = (room.reglas.modoArena === 'puzzles' ? 'CON PUZZLES · ' : 'CLÁSICO · ') + room.jugadores.length + ' jugadores · ' + room.reglas.cantidadBots + ' bots · ' + room.reglas.limiteKills + ' bajas · ' + room.reglas.duracion / 60 + ' min';
 });
 function actualizarCuentaInicio() {
   const overlay = document.getElementById('match-countdown');
@@ -316,7 +318,7 @@ network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, obstaculos: obstaculosDelServ
   obstaculos = obstaculosDelServidor || [];
 });
 
-network.on('inicioPartida', ({ tiempoRestante, preparacionRestante: countdown = 0 }) => {
+network.on('inicioPartida', ({ tiempoRestante, preparacionRestante: countdown = 0, preparacionTactica = null }) => {
   if (!currentRoom?.jugadores.some(j => j.id === network.id)) return;
   preparacionRestante = countdown;
   actualizarCuentaInicio();
@@ -328,6 +330,7 @@ network.on('inicioPartida', ({ tiempoRestante, preparacionRestante: countdown = 
   inicioScreen.style.display = 'none';
   finishScreen.style.display = 'none';
   setGameVisibility(true);
+  window.renderTactical?.(preparacionTactica);
   updateAudioLevels();
 });
 
@@ -342,6 +345,7 @@ network.on('finDeJuego', (podio) => {
   setGameVisibility(false);
   updateAudioLevels();
   resultsPinned = true;
+  window.renderTactical?.(null);
   preparacionRestante = 0;
   actualizarCuentaInicio();
   podiumList.replaceChildren();
@@ -368,6 +372,7 @@ network.on('finDeJuego', (podio) => {
 
 network.on('reinicioPartida', () => {
   if (resultsPinned) return;
+  window.renderTactical?.(null);
   stopResultMusic();
   gameStarted = false;
   gameFinished = false;
@@ -400,9 +405,10 @@ network.on('entradaRechazada', ({ motivo } = {}) => {
 });
 
 const environmentalDamage = {};
-network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor, cofres: cofresServidor, preparacionRestante: countdown = 0 }) => {
+network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor, cofres: cofresServidor, preparacionRestante: countdown = 0, preparacionTactica = null }) => {
   preparacionRestante = countdown;
   actualizarCuentaInicio();
+  window.renderTactical?.(preparacionTactica);
   cofres = cofresServidor || [];
   const jugadoresAnteriores = jugadores;
   jugadores = jugadoresDelServidor;
@@ -552,6 +558,9 @@ function setConnectionState(ready) {
   singlePlayerButton.disabled = !ready || gameFinished || soloModeLocked;
   document.getElementById('connection-status').textContent = ready ? 'Arena disponible' : 'Sin conexión. Reconectando...';
   if (!ready) {
+    window.renderTactical?.(null);
+    preparacionRestante = 0;
+    actualizarCuentaInicio();
     joinRequestPending = false;
     gameStarted = false;
     keys.clear();
@@ -584,11 +593,10 @@ function requestJoin(soloJugador) {
   network.send('unirse', { nombre, skin: ArenaUI.skin,
     limiteKills: Number(document.getElementById('match-kills').value),
     cantidadBots: Number(document.getElementById('match-bots').value),
-    duracion: Number(document.getElementById('match-duration').value), soloJugador });
+    duracion: Number(document.getElementById('match-duration').value), soloJugador, modoArena: ArenaUI.modo === 'puzzles' ? 'puzzles' : 'clasico' });
 }
 
-playButton.addEventListener('click', () => requestJoin(false));
-singlePlayerButton.addEventListener('click', () => requestJoin(true));
+playButton.addEventListener('click', () => requestJoin(ArenaUI.modo === 'solo'));
 
 nicknameInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') playButton.click();
@@ -651,7 +659,7 @@ canvas.addEventListener('mousemove', (event) => {
 
 // ----- Disparo ------------------------------------------------------------
 function shoot() {
-  if (preparacionRestante > 0) return false;
+  if (preparacionRestante > 0 || (window.tacticalState && ['instrucciones', 'puzzles', 'tienda'].includes(window.tacticalState.phase))) return false;
   if (!gameStarted || gameFinished) return false;
   const jugadorLocal = jugadores[network.id];
   if (!jugadorLocal || jugadorLocal.muerto || document.hidden || document.getElementById('sound-dialog').open) return false;
@@ -853,7 +861,7 @@ function createMobileControls() {
 if (isMobile) loadNippleJS().then(createMobileControls).catch(console.error);
 
 function update(deltaSeconds) {
-  if (preparacionRestante > 0) { fireHeld = false; return; }
+  if (preparacionRestante > 0 || (window.tacticalState && ['instrucciones', 'puzzles', 'tienda'].includes(window.tacticalState.phase))) { fireHeld = false; return; }
   if (document.getElementById('sound-dialog').open) { fireHeld = false; return; }
   if (!gameStarted || gameFinished || jugadores[network.id]?.muerto) fireHeld = false;
   let moveX = movement.x;

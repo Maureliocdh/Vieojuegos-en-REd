@@ -1,0 +1,28 @@
+const { test, expect } = require('@playwright/test');
+test('Instrucciones y cuenta inicial congelan la sala antes del minuto de energía', async ({ page }, testInfo) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.getByRole('button',{ name:'Crear sala' })).toBeEnabled();
+  await page.getByRole('tab',{ name:'Con puzzles',exact:true }).click();
+  await page.locator('#nickname').fill('Entrenamiento');
+  await page.locator('#match-bots').selectOption('0');
+  await page.getByRole('button',{ name:'Crear sala' }).click();
+  await page.getByRole('button',{ name:'Iniciar partida',exact:true }).click();
+  await expect(page.locator('#training-intro')).toBeVisible();
+  await expect(page.locator('[data-direction=right]')).toBeDisabled();
+  await page.keyboard.down('KeyD');
+  await page.waitForFunction(() => tacticalState?.phase === 'instrucciones' && tacticalState.seconds <= 3);
+  expect(await page.evaluate(() => tacticalState.players[network.id].training.player.x)).toBe(500);
+  expect(await page.evaluate(() => tacticalState.players[network.id].training.active)).toBe(null);
+  await page.keyboard.up('KeyD');
+  await page.screenshot({ path: testInfo.outputPath('instructions.png') });
+  const panel = await page.locator('#training-intro').boundingBox();
+  const count = await page.locator('#training-intro-count').boundingBox();
+  expect(count.y).toBeGreaterThanOrEqual(panel.y);
+  expect(count.y + count.height).toBeLessThanOrEqual(panel.y + panel.height);
+  await expect(page.locator('#training-intro')).toBeHidden({ timeout:8000 });
+  await expect(page.locator('#tactical-clock')).toHaveText('60s');
+  await expect(page.locator('[data-direction=right]')).toBeEnabled();
+  expect(errors).toEqual([]);
+});

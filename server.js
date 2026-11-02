@@ -1,4 +1,5 @@
 const path = require('path');
+const { Tactical } = require('./lib/tactical');
 const express = require('express');
 const http = require('http');
 const { skins } = require('./public/js/assets.js');
@@ -206,6 +207,19 @@ function sendToClient(client, type, data) {
 
 /** Difunde un evento usando el transporte activo. */
 function broadcast(type, data) {
+  if (preparacionTactica && ['estadoJuego', 'inicioPartida'].includes(type)) {
+    const clients = nativeMode ? wss.clients : io.sockets?.sockets.values() || [];
+    for (const client of clients) {
+      const id = nativeMode ? client.playerId : client.id;
+      const privateState = preparacionTactica.snapshot(Date.now(), id);
+      const packet = { ...data, preparacionTactica: privateState };
+      if (data.jugadores && privateState.phase !== 'combate') {
+        packet.jugadores = jugadores[id] ? { [id]: jugadores[id] } : {};
+      }
+      sendToClient(client, type, packet);
+    }
+    return;
+  }
   if (nativeMode) {
     for (const client of wss.clients) sendToClient(client, type, data);
   } else {
@@ -216,6 +230,41 @@ function broadcast(type, data) {
 let anfitrionId = null;
 let opcionesSala = {};
 let finPreparacion = 0;
+let preparacionTactica = null;
+let botsCompraron = false;
+function segundosPreparacion() {
+  if (preparacionTactica && preparacionTactica.phase(Date.now()).phase !== 'cuenta') return 0;
+  return Math.max(0, Math.ceil((finPreparacion - Date.now()) / 1000));
+}
+function concederCompra(id, item) {
+  const jugador = jugadores[id];
+  if (!jugador?.unido || jugador.muerto) return false;
+  if (item === 'escudo') {
+    if (jugador.escudo >= 100) return false;
+    jugador.escudo = Math.min(100, jugador.escudo + 50);
+    return true;
+  }
+  if (item === 'municion') { jugador.reservas.pistola += 24; return true; }
+  if (!recogerObjeto(jugador, item, STATS_ARMAS[item]?.capacidadCargador ?? null)) return false;
+  if (STATS_ARMAS[item]?.capacidadCargador) {
+    jugador.reservas[item] += item === 'rifle' ? 30 : item === 'sniper' ? 10 : 12;
+    jugador.slotSeleccionado = jugador.inventario.indexOf(item);
+    equiparArma(jugador);
+  }
+  return true;
+}
+function actualizarPreparacionTactica() {
+  if (!preparacionTactica || botsCompraron || preparacionTactica.phase(Date.now()).phase !== 'tienda') return;
+  botsCompraron = true;
+  for (const [id, jugador] of Object.entries(jugadores)) {
+    if (!jugador.esBot || !jugador.unido) continue;
+    // Presupuesto intermedio: 80 base + una bonificación de 20.
+    const cuenta = preparacionTactica.accounts.get(id);
+    if (cuenta) cuenta.credits = 100;
+    preparacionTactica.buy(id, 'rifle', Date.now(), item => concederCompra(id, item));
+  }
+}
+
 function estadoSala() {
   return { anfitrionId, activa: partidaEnCurso, finalizada: partidaFinalizada,
     reglas: opcionesSala, jugadores: Object.entries(jugadores)
@@ -225,7 +274,7 @@ function estadoSala() {
 function publicarSala() { broadcast('estadoSala', estadoSala()); }
 function iniciarDesdeSala(id) {
   if (id !== anfitrionId || !jugadores[id]?.unido || partidaEnCurso || partidaFinalizada) return;
-  finPreparacion = Date.now() + 4000;
+  finPreparacion = Date.now() + (opcionesSala.modoArena === 'puzzles' ? 89000 : 4000);
   iniciarPartida(opcionesSala);
   for (const jugador of Object.values(jugadores)) {
     if (!jugador.unido) continue;
@@ -236,12 +285,15 @@ function iniciarDesdeSala(id) {
     equipoInicial(jugador);
     Object.assign(jugador, obtenerPosicionSpawn());
   }
+  preparacionTactica = opcionesSala.modoArena === 'puzzles'
+    ? new Tactical(Object.keys(jugadores).filter(id => jugadores[id].unido), finPreparacion - 89000) : null;
+  botsCompraron = false;
   publicarSala();
-  broadcast('inicioPartida', { tiempoRestante, preparacionRestante: Math.max(0, Math.ceil((finPreparacion - Date.now()) / 1000)) });
+  broadcast('inicioPartida', { tiempoRestante, preparacionRestante: segundosPreparacion(), preparacionTactica: preparacionTactica?.snapshot(Date.now()) ?? null });
 }
 
 function reglasPartida() {
-  return { limiteKills, duracion: duracionPartida, cantidadBots, soloJugador: modoSoloJugador, activa: partidaEnCurso, finalizada: partidaFinalizada };
+  return { limiteKills, duracion: duracionPartida, cantidadBots, soloJugador: modoSoloJugador, modoArena: opcionesSala.modoArena || 'clasico', activa: partidaEnCurso, finalizada: partidaFinalizada };
 }
 
 function iniciarPartida(opciones = {}) {
@@ -332,6 +384,8 @@ function reiniciarMundo() {
     anfitrionId = null;
     opcionesSala = {};
     finPreparacion = 0;
+    preparacionTactica = null;
+    botsCompraron = false;
     broadcast('configPartida', reglasPartida());
     broadcast('reinicioPartida', {});
     publicarSala();
@@ -360,6 +414,7 @@ function unirseJugador(id, nombre, client = null, skin = 'pulse', opciones = {})
       duracion: [60,120,180,300].includes(opciones.duracion) ? opciones.duracion : 120,
       cantidadBots: [0,5,11,15,20].includes(opciones.cantidadBots) ? opciones.cantidadBots : 11,
       soloJugador: opciones.soloJugador === true,
+      modoArena: opciones.soloJugador !== true && opciones.modoArena === 'puzzles' ? 'puzzles' : 'clasico',
     };
   }
   const nombreLimpio = typeof nombre === 'string' ? nombre.trim().slice(0, 16) : '';
@@ -524,6 +579,12 @@ function generarBot(id) {
 
 function removePlayer(id) {
   delete jugadores[id];
+  if (partidaEnCurso && !Object.values(jugadores).some(j => j.unido && !j.esBot)) {
+    partidaEnCurso = false;
+    if (temporizadorPartida) clearInterval(temporizadorPartida);
+    temporizadorPartida = null;
+    reiniciarMundo();
+  }
   if (id === anfitrionId) {
     anfitrionId = Object.keys(jugadores).find(key => jugadores[key].unido && !jugadores[key].esBot) || null;
     if (!anfitrionId) opcionesSala = {};
@@ -704,6 +765,10 @@ function dropItem(id, { slot } = {}) {
 
 function processClientMessage(id, message, client = null) {
   if (!message || typeof message !== 'object') return;
+  if (partidaEnCurso && jugadores[id]?.unido && preparacionTactica) {
+    if (message.type === 'moverEntrenamiento') preparacionTactica.move(id, message.data, Date.now());
+    if (message.type === 'comprarEquipo') preparacionTactica.buy(id, message.data?.item, Date.now(), item => concederCompra(id, item));
+  }
   if (message.type === 'cerrarSala') cerrarSala(id);
   if (message.type === 'iniciarSala') iniciarDesdeSala(id);
   if (message.type === 'unirse') unirseJugador(id, message.data?.nombre, client, message.data?.skin, message.data);
@@ -758,7 +823,7 @@ if (nativeMode) {
     sendToClient(socket, 'configPartida', reglasPartida());
     sendToClient(socket, 'estadoSala', estadoSala());
 
-    for (const type of ['cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada']) {
+    for (const type of ['moverEntrenamiento', 'comprarEquipo', 'cerrarSala', 'iniciarSala', 'movimiento', 'unirse', 'disparar', 'cambiarSlot', 'intercambiar', 'recargar', 'tirarItem', 'lanzarGranada']) {
       socket.on(type, (data) => processClientMessage(id, { type, data }, socket));
     }
     socket.on('disconnect', () => removePlayer(id));
@@ -1006,8 +1071,10 @@ function aplicarZonasEspeciales() {
 
 // Game loop compartido: no depende de cuál transporte esté activo.
 setInterval(() => {
+  preparacionTactica?.tick(Date.now());
+  actualizarPreparacionTactica();
   if (!partidaEnCurso || Date.now() < finPreparacion) {
-    broadcast('estadoJuego', { jugadores, balas, plataformas, obstaculos, itemsEnSuelo, granadas, zonaSegura, cofres, preparacionRestante: Math.max(0, Math.ceil((finPreparacion - Date.now()) / 1000)) });
+    broadcast('estadoJuego', { jugadores, balas, plataformas, obstaculos, itemsEnSuelo, granadas, zonaSegura, cofres, preparacionRestante: segundosPreparacion(), preparacionTactica: preparacionTactica?.snapshot(Date.now()) ?? null });
     return;
   }
   actualizarZonaSegura();
@@ -1082,7 +1149,7 @@ setInterval(() => {
     }
   }
 
-  broadcast('estadoJuego', { jugadores, balas, plataformas, obstaculos, itemsEnSuelo, granadas, zonaSegura, cofres, preparacionRestante: Math.max(0, Math.ceil((finPreparacion - Date.now()) / 1000)) });
+  broadcast('estadoJuego', { jugadores, balas, plataformas, obstaculos, itemsEnSuelo, granadas, zonaSegura, cofres, preparacionRestante: segundosPreparacion(), preparacionTactica: preparacionTactica?.snapshot(Date.now()) ?? null });
 }, 1000 / TICK_RATE);
 
 function recogerObjeto(jugador, item, balas, cantidad, rareza = 0) {

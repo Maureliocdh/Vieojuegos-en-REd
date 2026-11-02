@@ -6,7 +6,7 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
   page.on('response', (response) => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`); });
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Crear sala' })).toBeEnabled();
-  await expect(page.getByRole('button', { name: 'Un jugador' })).toBeEnabled();
+  await expect(page.getByRole('tab', { name: 'Un jugador' })).toBeEnabled();
   const soloRequest = await page.evaluate(() => {
     let request;
     const originalSend = network.send;
@@ -14,12 +14,14 @@ test('Lobby, skins, sonido, mapa, tormenta y controles', async ({ page, context 
     document.getElementById('nickname').value = 'Solo';
     document.getElementById('nickname').dispatchEvent(new Event('input', { bubbles: true }));
     document.getElementById('singleplayer-button').click();
+    document.getElementById('jugar-button').click();
     network.send = originalSend;
     return request;
   });
   expect(soloRequest).toMatchObject({ type: 'unirse', data: { nombre: 'Solo', soloJugador: true } });
   await page.reload();
-  await expect(page.getByRole('button', { name: 'Un jugador' })).toBeEnabled();
+  await expect(page.getByRole('tab', { name: 'Un jugador' })).toBeEnabled();
+  await page.getByRole('tab', { name: 'Clásico', exact: true }).click();
   await page.getByRole('button', { name: 'Ronin', exact: true }).click();
   await expect(page.locator('#skin-preview')).toHaveAttribute('alt', 'Ronin');
   await page.getByRole('textbox').fill('Prueba móvil');

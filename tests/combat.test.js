@@ -25,6 +25,8 @@ function loadGame() {
   });
   vm.runInContext(`${fs.readFileSync(serverPath, 'utf8')}\nglobalThis.testing = { jugadores, plataformas, balas, itemsEnSuelo, obstaculos, addPlayer, unirseJugador, equiparArma, createBullet, reloadWeapon, exchangeWithPlatform, dropItem, interactuar, moverEntidad, colisionaConObstaculo, respawn, recogerObjeto };`, sandbox);
   const game = sandbox.testing;
+  game.unirseSala = game.unirseJugador;
+  vm.runInContext('Object.assign(testing, { processClientMessage, tactical: () => preparacionTactica });', sandbox);
   vm.runInContext('Object.assign(testing, { zonaSegura, actualizarZonaSegura, aplicarDañoZona, cofres, procesarRespawns, updateMovement, actualizarBots, iniciarPartida, equipoInicial, finalizarPartida, iniciarDesdeSala, estadoSala });', sandbox);
   for (const id of Object.keys(game.jugadores)) delete game.jugadores[id];
   // Estas pruebas aíslan combate; la admisión y el inicio real se prueban por red.
@@ -53,6 +55,55 @@ test('Resultados incluyen todos los puestos y el reinicio limpia las puntuacione
   assert.ok(Object.values(game.jugadores).every(j => j.kills === 0 && !j.unido));
   assert.equal(game.estadoSala().anfitrionId, null);
   assert.ok(messages.some(m => m.type === 'reinicioPartida'));
+});
+
+test('Modo puzzles integra recompensas, compras, bots y combate sin reponer el equipo comprado', () => {
+  const { game, tick, advance } = loadGame();
+  game.addPlayer('host');
+  game.unirseSala('host', 'Host', null, 'nova', { modoArena: 'puzzles', cantidadBots: 5 });
+  game.iniciarDesdeSala('host');
+  const player = game.jugadores.host;
+  const mode = game.tactical();
+  assert.ok(mode);
+  const initialX = player.x;
+  game.processClientMessage('host', { type: 'movimiento', data: { x: 100, y: 100, angle: 0 } });
+  assert.equal(player.x, initialX);
+  advance(5000); tick();
+  const room = mode.accounts.get('host').training;
+  for (let i = 0; i < 4; i++) {
+    room.active = 0; room.expires = 20000;
+    room.player = { x: room.beacons[0].x, y: room.beacons[0].y };
+    advance(100); tick();
+  }
+  assert.equal(mode.snapshot(15400, 'host').players.host.credits, 100);
+  tick();
+  assert.equal(player.vida, 100);
+  advance(59600); tick();
+  game.processClientMessage('host', { type: 'comprarEquipo', data: { item: 'rifle', precio: 0 } });
+  assert.ok(player.inventario.includes('rifle'));
+  assert.equal(player.reservas.rifle, 30);
+  assert.equal(mode.accounts.get('host').credits, 0);
+  assert.ok(Object.values(game.jugadores).filter(p => p.esBot).every(p => p.inventario.includes('rifle')));
+  advance(20000); tick();
+  assert.equal(mode.phase(95000).phase, 'cuenta');
+  advance(4000); tick();
+  assert.ok(player.inventario.includes('rifle'));
+  assert.equal(mode.phase(99000).phase, 'combate');
+  game.respawn(player); advance(3000); game.procesarRespawns();
+  assert.equal(player.inventario.includes('rifle'), false);
+  game.finalizarPartida();
+  assert.equal(game.tactical(), null);
+});
+
+test('Un jugador conserva combate clásico y no permite invitados aunque se soliciten puzzles', () => {
+  const { game } = loadGame();
+  game.addPlayer('solo'); game.addPlayer('guest');
+  game.unirseSala('solo', 'Solo', null, 'pulse', { soloJugador: true, modoArena: 'puzzles', cantidadBots: 0 });
+  game.unirseSala('guest', 'Guest');
+  assert.equal(game.jugadores.guest.unido, false);
+  game.iniciarDesdeSala('solo');
+  assert.equal(game.tactical(), null);
+  assert.equal(game.estadoSala().reglas.modoArena, 'clasico');
 });
 
 test('Hielo limita humanos y bots y recupera la velocidad fuera', () => {

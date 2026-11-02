@@ -12,6 +12,35 @@
     save() { try { localStorage.setItem('outpost-settings', JSON.stringify(this)); } catch {} },
   };
   const picker = document.getElementById('skin-picker');
+  ui.modo = ['clasico', 'puzzles', 'solo'].includes(saved.modo) ? saved.modo : 'clasico';
+  const tabs = [...document.querySelectorAll('[data-mode]')];
+  window.selectArenaMode = (mode, persist = true) => {
+    if (!['clasico', 'puzzles', 'solo'].includes(mode)) mode = 'clasico';
+    ui.modo = mode;
+    for (const tab of tabs) {
+      const selected = tab.dataset.mode === mode;
+      tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      if (selected) document.getElementById('arena-mode-panel').setAttribute('aria-labelledby', tab.id);
+    }
+    document.getElementById('mode-description').textContent = {
+      clasico: 'Combate directo con reapariciones. Reúne a tus amigos y domina la arena.',
+      puzzles: '60 s de balizas → 20 s de compras → combate. Gana créditos y elige tu equipo inicial.',
+      solo: 'Arena clásica contra bots. La sala no admite otros jugadores; puedes elegir cuántos bots participan.',
+    }[mode];
+    if (persist) ui.save();
+  };
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => window.selectArenaMode(tab.dataset.mode));
+    tab.addEventListener('keydown', event => {
+      const offset = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+      if (!offset && !['Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const next = tabs[event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + offset + tabs.length) % tabs.length];
+      if (!next.disabled) { next.focus(); next.click(); }
+    });
+  });
+  window.selectArenaMode(ui.modo, false);
   function selectSkin(id) {
     ui.skin = id;
     const skin = GameAssets.skins.find((candidate) => candidate.id === id);

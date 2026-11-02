@@ -114,6 +114,22 @@ La interfaz admite orientación vertical y horizontal. Las pruebas automatizadas
 
 ## Preparar una Partida
 
+Selecciona una pestaña antes de crear la sala:
+
+| Modalidad | Preparación | Acceso |
+| :--- | :--- | :--- |
+| Clásico | Cuenta de cuatro segundos y combate Arena habitual. | Multijugador. |
+| Con puzzles | 5 s de instrucciones, 60 s de balizas, 20 s de compras, cuenta de cuatro segundos y combate Arena. | Multijugador. |
+| Un jugador | Arena clásica con la cantidad de bots elegida. | Sala exclusiva, sin invitados. |
+
+Los invitados heredan la modalidad elegida por el anfitrión y pueden personalizar su nombre y personaje. El tiempo máximo configurado corresponde al combate; no consume los segundos de puzzles, tienda ni cuenta inicial.
+
+En **Con puzzles**, cada jugador entra solo a una cámara de entrenamiento de 1000×700, con nueve balizas aleatorias separadas por sectores. Primero aparecen las instrucciones y una cuenta sincronizada de cinco segundos: durante ella se muestra la sala con las balizas apagadas y el movimiento bloqueado. Al terminar empieza el minuto completo de entrenamiento. Se ilumina una baliza a la vez durante seis segundos. Se camina con WASD o los botones direccionales de pantalla; acercarse a una baliza encendida recoge automáticamente su energía y otorga cinco créditos. Después de recogerla o de que expire, hay una pausa de 0,4 segundos antes de la siguiente activación. No hay daño ni penalización por dejar pasar energía.
+
+Todos reciben 80 créditos base y pueden ganar hasta 100 adicionales. La fase dura un minuto para todos; luego pasan juntos a la tienda. El servidor calcula movimiento, activaciones y recogidas. Cada cliente recibe solo las posiciones de sus propias balizas, su posición y su saldo; los puntos de los demás no se envían durante la preparación. El mapa de combate permanece congelado y las posiciones del entrenamiento no cambian el lugar de aparición en la arena.
+
+La tienda ofrece escopeta (80), rifle (100), sniper (140), escudo inicial +50 (40), botiquín (30) y 24 balas de reserva de pistola (20). Cada suministro se compra una vez, excepto la munición, que admite dos compras. El servidor valida las respuestas, el saldo, los límites y el espacio de inventario. Los bots disponen de un presupuesto intermedio de 100 créditos y compran un rifle. El botín del mapa se conserva; al morir se pierde el equipo comprado y se reaparece con la pistola habitual. Los créditos sobrantes no pasan al combate ni a otras rondas.
+
 1. Elige un operador y escribe tu nombre.
 2. Selecciona las **bajas para ganar**: 5, 10, 20 o 30.
 3. Selecciona el **tiempo máximo**: 1, 2, 3 o 5 minutos.

@@ -10,7 +10,7 @@ body {
   background: #111;
 }
 
-canvas {
+#game {
   position: fixed;
   top: 0;
   left: 0;
@@ -234,3 +234,47 @@ body.mobile #respawn-message { font-size: 18px; padding: 12px; width: 240px; }
 #match-countdown h2 { font-size: clamp(22px,4vw,40px); margin: 0; }
 #countdown-number { font-size: clamp(35px,9vw,100px); color: #dfff78; }
 #match-countdown span { font-size: 13px; color: #abc6b9; }
+.panel-inicio .arena-tabs { display: flex; border-bottom: 1px solid #dfff7850; gap: 4px; margin-bottom: 0; }
+.panel-inicio .arena-tabs button, .panel-inicio .arena-tabs #singleplayer-button { flex: 1; width: auto; min-width: 0; margin: 0; padding: 12px 6px; border: 1px solid #ffffff25; border-bottom: 0; border-radius: 8px 8px 0 0; background: #ffffff08; color: #aac3b5; font-size: 13px; }
+.panel-inicio .arena-tabs button[aria-selected=true], .panel-inicio .arena-tabs #singleplayer-button[aria-selected=true] { background: #dfff781a; color: #dfff78; border-color: #dfff7870; }
+.arena-tabs button:focus-visible { outline: 2px solid #dfff78; outline-offset: 2px; }
+#mode-description { color: #adc5b7; font-size: 12px; min-height: 46px; line-height: 1.5; margin: 0 0 16px; padding: 12px; background: #ffffff05; }
+.panel-inicio .start-actions { grid-template-columns: 1fr; }
+#tactical-screen { position: fixed; inset: 0; z-index: 95; overflow: auto; background: linear-gradient(120deg,#0b201dfc,#173c32fc); padding: 24px; display: grid; place-items: center; color: #edf5eb; font-family: 'Trebuchet MS',sans-serif; }
+.tactical-panel { width: min(850px,100%); padding: 24px; border: 1px solid #ffffff22; border-radius: 12px; background: #102a24; }
+.tactical-panel h1 { font-size: clamp(26px,4vw,42px); margin: 12px 0; }
+#tactical-instructions { color: #b6cbbf; line-height: 1.6; }
+#tactical-clock, .credit-balance strong { color: #dfff78; font-size: 25px; }
+.credit-balance { color: #b6cbbf; font-size: 12px; }
+#puzzle-sequence { font-size: clamp(22px,4vw,36px); padding: 24px 8px; text-align: center; background: #ffffff08; border-radius: 8px; }
+#puzzle-options { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin: 16px 0; }
+#puzzle-options button, #shop-area button { padding: 15px; background: #dfff78; color: #10271d; border: 0; border-radius: 5px; font: bold 17px 'Trebuchet MS',sans-serif; cursor: pointer; }
+#shop-area { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+#shop-area article { padding: 16px; border: 1px solid #ffffff25; border-radius: 8px; background: #ffffff05; display: flex; flex-direction: column; }
+#shop-area h3 { margin: 0; font-size: 17px; }
+#shop-area p { color: #b6cbbf; font-size: 13px; flex: 1; }
+#shop-area button { font-size: 13px; }
+#tactical-message { min-height: 24px; color: #dfff78; }
+#puzzle-options button:disabled, #shop-area button:disabled { opacity: .45; cursor: default; }
+@media(max-width:600px) { #tactical-screen { padding: 12px; } .tactical-panel { padding: 15px; } #shop-area { grid-template-columns: repeat(2,minmax(0,1fr)); } #shop-area article { padding: 10px; } #tactical-screen .lobby-header { gap: 8px; font-size: 10px; } }
+.training-viewport { position: relative; width: min(100%, 61.4286vh); margin-inline: auto; }
+#training-map { display: block; width: 100%; height: auto; aspect-ratio: 10 / 7; background: #101c2b; border: 1px solid #5d8299; border-radius: 8px; }
+#training-intro { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; text-align: center; border: 1px solid #7fcfd0; border-radius: 8px; background: #0a1a2bed; color: #edf5eb; }
+#training-intro h2 { color: #dfff78; font-size: clamp(16px,2vw,24px); margin: 0; }
+#training-intro p { font-size: 12px; line-height: 1.7; margin: 0; }
+#training-intro-count { color: #dfff78; font-size: clamp(24px,4vw,42px); line-height: 1; }
+#training-intro span { color: #a6cbd6; font-size: 11px; }
+#training-pad button:disabled { opacity: .4; cursor: default; }
+.training-summary { display: flex; justify-content: space-between; gap: 12px; color: #9dbbcf; font-size: 12px; margin: 8px 0; }
+.training-summary span:last-child { font-size: 10px; }
+#tactical-screen.is-training { background: linear-gradient(120deg,#0a1527fc,#1d344bfc); }
+.is-training .tactical-panel { width: min(1000px,100%); background: #111f30; padding: 18px; }
+.is-training .tactical-panel h1 { font-size: clamp(22px,3vw,32px); }
+.is-training #tactical-instructions { font-size: 13px; margin: 8px 0; }
+.is-training .credit-balance { margin: 8px 0; }
+.is-training #tactical-message { margin: 8px 0; }
+.is-training .room-note { margin: 8px 0 0; font-size: 11px; }
+#training-pad { display: flex; justify-content: center; gap: 8px; margin: 12px 0; touch-action: none; }
+#training-pad button { width: 52px; height: 46px; border: 1px solid #7fcfd0; border-radius: 6px; color: #dbffff; background: #21415c; font-size: 24px; touch-action: none; user-select: none; cursor: pointer; }
+#training-pad button:active { background: #397b87; }
+@media(max-width:600px) { .is-training .tactical-panel { padding: 12px; } .training-summary { font-size: 10px; } .training-summary span:last-child { max-width: 110px; text-align: right; } }
