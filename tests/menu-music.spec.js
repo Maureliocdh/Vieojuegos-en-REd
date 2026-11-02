@@ -1,0 +1,76 @@
+const { test, expect } = require('@playwright/test');
+
+test('Música original del menú: interacción, sonido real, ajustes y ciclo de partida', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.locator('#jugar-button')).toBeEnabled();
+  expect(await page.evaluate(() => audioCtx === null && menuMusicTimer === null)).toBe(true);
+  await page.locator('#nickname').click();
+  await page.locator('#nickname').fill('Música');
+  await page.waitForFunction(() => audioCtx?.state === 'running' && menuNotes.size > 0);
+  const initial = await page.evaluate(() => {
+    const timer = menuMusicTimer;
+    const notes = menuNotes.size;
+    updateAudioLevels();
+    window.menuAnalyser = audioCtx.createAnalyser();
+    menuMusicGain.connect(window.menuAnalyser);
+    return { reused: timer === menuMusicTimer && notes === menuNotes.size, volume: menuMusicGain.gain.value };
+  });
+  expect(initial.reused).toBe(true);
+  expect(initial.volume).toBeCloseTo(0.25);
+  await page.waitForFunction(() => {
+    const samples = new Float32Array(window.menuAnalyser.fftSize);
+    window.menuAnalyser.getFloatTimeDomainData(samples);
+    return samples.some(value => Math.abs(value) > 0.001);
+  });
+  await page.getByRole('button', { name: 'Ajustes de sonido', exact: true }).click();
+  await page.locator('#volume-ambient').fill('40');
+  expect(await page.evaluate(() => menuMusicGain.gain.value)).toBeCloseTo(0.4);
+  await page.locator('#mute-audio').check();
+  expect(await page.evaluate(() => menuMusicTimer === null && menuNotes.size === 0 && masterGain.gain.value === 0)).toBe(true);
+  await page.locator('#mute-audio').uncheck();
+  await page.waitForFunction(() => menuNotes.size > 0);
+  await page.locator('#volume-ambient').fill('0');
+  expect(await page.evaluate(() => menuNotes.size)).toBe(0);
+  await page.locator('#volume-ambient').fill('40');
+  await page.locator('#volume-master').fill('0');
+  expect(await page.evaluate(() => menuNotes.size)).toBe(0);
+  await page.locator('#volume-master').fill('65');
+  await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
+  const visibility = await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    const stopped = menuNotes.size === 0 && menuMusicTimer === null;
+    delete document.hidden;
+    document.dispatchEvent(new Event('visibilitychange'));
+    return { stopped, resumed: menuNotes.size > 0 };
+  });
+  expect(visibility).toEqual({ stopped: true, resumed: true });
+  await page.waitForFunction(() => menuChordIndex >= 3, null, { timeout: 10000 });
+  expect(await page.evaluate(() => menuNotes.size <= 24)).toBe(true);
+  await page.locator('#singleplayer-button').click();
+  await page.locator('#match-bots').selectOption('0');
+  await page.locator('#jugar-button').click();
+  await expect(page.locator('#pantalla-espera')).toBeVisible();
+  expect(await page.evaluate(() => menuMusicTimer === null && menuNotes.size === 0)).toBe(true);
+  await page.locator('#close-room').click();
+  await expect(page.locator('#pantalla-inicio')).toBeVisible();
+  await page.waitForFunction(() => menuNotes.size > 0);
+  await page.locator('#jugar-button').click();
+  await page.locator('#start-match').click();
+  await expect(page.locator('#match-countdown')).toBeVisible();
+  expect(await page.evaluate(() => menuNotes.size)).toBe(0);
+  await page.locator('#leave-match').click();
+  await expect(page.locator('#pantalla-inicio')).toBeVisible();
+  await page.waitForFunction(() => menuNotes.size > 0);
+  await page.evaluate(() => {
+    gameStarted = true;
+    network.receive('finDeJuego', [{ id: network.id, nombre: 'Música', kills: 1 }]);
+  });
+  await expect(page.locator('#pantalla-fin')).toBeVisible();
+  expect(await page.evaluate(() => menuNotes.size)).toBe(0);
+  await page.locator('#return-home').click();
+  await page.waitForFunction(() => menuNotes.size > 0);
+  expect(errors).toEqual([]);
+});

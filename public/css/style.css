@@ -10,7 +10,7 @@ body {
   background: #111;
 }
 
-canvas {
+#game {
   position: fixed;
   top: 0;
   left: 0;
@@ -152,11 +152,29 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--operator-co
 #skin-picker img { width: 100%; height: 100%; display: block; }
 .loadout label { font-size: 12px; color: #c2d1c7; margin-bottom: 0; }
 .panel-inicio #nickname { border: 1px solid #ffffff33; border-radius: 5px; color: white; background: #0d201cbb; padding: 13px 15px; margin-top: 8px; }
-.panel-inicio #jugar-button { display: flex; justify-content: space-between; align-items: center; background: var(--acid); color: var(--ink); height: 54px; padding: 12px 18px; font-size: 18px; margin-top: 12px; border-radius: 5px; }
+.start-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.panel-inicio .start-actions button { display: flex; justify-content: space-between; align-items: center; min-width: 0; height: 54px; margin: 0; padding: 10px 12px; border-radius: 5px; font-size: 15px; }
+.panel-inicio #jugar-button { background: var(--acid); color: var(--ink); }
+.panel-inicio #singleplayer-button { border: 1px solid #dfff7880; background: #dfff7814; color: var(--paper); }
+.panel-inicio .start-actions button svg { width: 18px; height: 18px; flex-shrink: 0; }
 #connection-status { color: #b8cbbf; font-size: 11px; min-height: 15px; margin: 12px 0 0; }
 .match-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
 .match-settings select { width: 100%; display: block; margin-top: 8px; height: 42px; padding: 8px; border: 1px solid #ffffff44; background: #18372f; color: #f3f6ef; border-radius: 5px; font: 14px 'Trebuchet MS', sans-serif; }
 .match-settings select:disabled { opacity: .75; }
+.map-preview { display: flex; align-items: center; gap: 14px; padding: 12px; margin-bottom: 16px; border: 1px solid #ffffff30; border-radius: 8px; background: #10251c; text-align: left; }
+.map-preview p { margin: 5px 0 0; color: #b6c8c0; font-size: 12px; }
+.map-preview-art { flex: 0 0 68px; height: 54px; border: 2px solid #9db57d; background: repeating-linear-gradient(45deg, transparent 0 16px, #b3b680 17px 24px), #3b764d; }
+.map-preview[data-map=orbital] { background: #11253a; border-color: #69d7ed80; }
+body[data-map=orbital] #pantalla-inicio { background: linear-gradient(100deg,#08172af5,#0b203aa0 54%,#08172af0); }
+.map-preview[data-map=orbital] .map-preview-art { border-color: #67dbea; background: linear-gradient(90deg, transparent 43%, #7ef0ff 44% 48%, #122838 49% 55%, #7ef0ff 56% 59%, transparent 60%), repeating-linear-gradient(0deg,#23364b 0 12px,#50687f 13px 15px); }
+.map-vote { margin: 18px 0; padding: 16px; border: 1px solid #70d7e3; border-radius: 8px; background: #122638; text-align: left; }
+.map-vote[hidden] { display: none; }
+.map-vote h2 { font-size: 18px; margin: 0 0 8px; color: #a4eff2; }
+.vote-status { font-size: 13px; line-height: 1.5; color: #d3e2e8; }
+.vote-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.vote-choices button, .panel-inicio .vote-choices button { width: 100%; margin: 0; padding: 12px 8px; border: 1px solid #7195a5; border-radius: 6px; background: #233d50; color: #e4faff; font: bold 13px sans-serif; cursor: pointer; }
+.vote-choices button[aria-pressed=true] { border-color: #a6f05b; background: #304c36; }
+.vote-choices button:disabled { opacity: .6; cursor: default; }
 select:focus-visible { outline: 3px solid var(--operator-color); outline-offset: 3px; }
 .lobby-footer { border-top: 1px solid #ffffff22; padding: 20px 0 0; color: #99b5a4; font-size: 10px; }
 .lobby-footer b { color: #edf5eb; margin-left: 10px; }
@@ -168,8 +186,10 @@ select:focus-visible { outline: 3px solid var(--operator-color); outline-offset:
 #sound-dialog input[type=range] { width: 100%; accent-color: var(--acid); margin: 15px 0 28px; }
 #sound-dialog .mute-row { align-items: center; }
 #sound-dialog input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--acid); }
-#game-settings { position: fixed; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 50; background: #112d28dd; }
-#game-settings[hidden] { display: none; }
+#game-settings, #leave-match { position: fixed; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 101; background: #112d28dd; }
+#leave-match { right: max(66px, calc(66px + env(safe-area-inset-right))); color: #ffb4a9; border-color: #ffb4a980; }
+#leave-match:hover { background: #65372f; }
+#game-settings[hidden], #leave-match[hidden] { display: none; }
 #scoreboard { max-height: 225px; overflow: hidden; font-size: 12px; min-width: 135px; }
 @keyframes arrive { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 700px) {
@@ -198,3 +218,79 @@ body.mobile #grenade-button { right: 120px; }
 body.mobile #swap-button { right: 172px; }
 body.mobile #respawn-message { font-size: 18px; padding: 12px; width: 240px; }
 @media (prefers-reduced-motion: reduce) { #skin-preview { animation: none; } }
+#pantalla-espera[hidden], [hidden] { display: none !important; }
+#pantalla-espera { position: fixed; inset: 0; z-index: 100; overflow: auto; display: grid; place-items: center; background: linear-gradient(120deg,#0b201df5,#173c32ef); color: #edf5eb; font-family: 'Trebuchet MS',sans-serif; padding: 24px; }
+.room-panel { width: min(760px,100%); }
+.room-panel h1 { font-size: clamp(30px,5vw,52px); line-height: 1.05; }
+.room-panel h1 span { color: #dfff78; }
+#room-players { list-style: none; padding: 0; display: grid; gap: 8px; max-height: 40vh; overflow: auto; }
+#room-players li { display: flex; align-items: center; gap: 14px; padding: 10px 14px; background: #ffffff08; border: 1px solid #ffffff22; border-radius: 8px; }
+#room-players span { flex: 1; overflow-wrap: anywhere; }
+#room-players b { color: #dfff78; font-size: 10px; }
+#start-match { background: #dfff78; color: #10271d; border: 0; border-radius: 5px; padding: 16px 30px; font: bold 17px 'Trebuchet MS',sans-serif; cursor: pointer; }
+.room-note { color: #9bb8aa; font-size: 13px; line-height: 1.6; }
+#pantalla-fin { background: linear-gradient(120deg,#0b201df5,#173c32f5); padding: 24px; overflow: auto; align-items: flex-start; font-family: 'Trebuchet MS',sans-serif; }
+#pantalla-fin .panel-fin { width: min(960px,100%); padding: 24px; margin: auto; border: 1px solid #ffffff22; border-radius: 12px; background: #102a24; color: #edf5eb; text-align: left; }
+#pantalla-fin h1 { color: #edf5eb; font-size: clamp(25px,4vw,42px); }
+#pantalla-fin h2 { font-size: 17px; color: #b3cbbb; }
+#result-leaders { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+#result-leaders article { text-align: center; background: #ffffff08; border: 1px solid #ffffff22; border-radius: 8px; padding: 16px 8px; overflow-wrap: anywhere; }
+#result-leaders article:first-child { border-color: #dfff78; background: #dfff7810; }
+#result-leaders b { display: block; color: #dfff78; font-size: 24px; }
+#result-leaders img { max-width: 100%; height: auto; }
+#result-leaders h3 { margin: 6px 0; font-size: 15px; }
+#pantalla-fin #podio li { padding: 12px; border-bottom: 1px solid #ffffff18; font-size: 15px; color: #edf5eb; }
+#pantalla-fin #podio .own-score { background: #dfff7814; color: #dfff78; }
+@media(max-width:480px) { #pantalla-fin { padding: 10px; } #pantalla-fin .panel-fin { padding: 15px; } #result-leaders { gap: 5px; } #room-players li { gap: 8px; padding: 8px; } }
+#close-room, #return-home { padding: 14px 22px; border: 1px solid #dfff7880; border-radius: 5px; background: #dfff7814; color: #edf5eb; font: bold 15px 'Trebuchet MS',sans-serif; cursor: pointer; margin-top: 16px; }
+#close-room { display: block; }
+#return-home { background: #dfff78; color: #10271d; }
+#match-countdown { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; padding: 24px; background: #0a211dc9; color: #edf5eb; font-family: 'Trebuchet MS',sans-serif; }
+#match-countdown p { letter-spacing: .15em; color: #dfff78; }
+#match-countdown h2 { font-size: clamp(22px,4vw,40px); margin: 0; }
+#countdown-number { font-size: clamp(35px,9vw,100px); color: #dfff78; }
+#match-countdown span { font-size: 13px; color: #abc6b9; }
+.panel-inicio .arena-tabs { display: flex; border-bottom: 1px solid #dfff7850; gap: 4px; margin-bottom: 0; }
+.panel-inicio .arena-tabs button, .panel-inicio .arena-tabs #singleplayer-button { flex: 1; width: auto; min-width: 0; margin: 0; padding: 12px 6px; border: 1px solid #ffffff25; border-bottom: 0; border-radius: 8px 8px 0 0; background: #ffffff08; color: #aac3b5; font-size: 13px; }
+.panel-inicio .arena-tabs button[aria-selected=true], .panel-inicio .arena-tabs #singleplayer-button[aria-selected=true] { background: #dfff781a; color: #dfff78; border-color: #dfff7870; }
+.arena-tabs button:focus-visible { outline: 2px solid #dfff78; outline-offset: 2px; }
+#mode-description { color: #adc5b7; font-size: 12px; min-height: 46px; line-height: 1.5; margin: 0 0 16px; padding: 12px; background: #ffffff05; }
+.panel-inicio .start-actions { grid-template-columns: 1fr; }
+#tactical-screen { position: fixed; inset: 0; z-index: 95; overflow: auto; background: linear-gradient(120deg,#0b201dfc,#173c32fc); padding: 24px; display: grid; place-items: center; color: #edf5eb; font-family: 'Trebuchet MS',sans-serif; }
+.tactical-panel { width: min(850px,100%); padding: 24px; border: 1px solid #ffffff22; border-radius: 12px; background: #102a24; }
+.tactical-panel h1 { font-size: clamp(26px,4vw,42px); margin: 12px 0; }
+#tactical-instructions { color: #b6cbbf; line-height: 1.6; }
+#tactical-clock, .credit-balance strong { color: #dfff78; font-size: 25px; }
+.credit-balance { color: #b6cbbf; font-size: 12px; }
+#puzzle-sequence { font-size: clamp(22px,4vw,36px); padding: 24px 8px; text-align: center; background: #ffffff08; border-radius: 8px; }
+#puzzle-options { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin: 16px 0; }
+#puzzle-options button, #shop-area button { padding: 15px; background: #dfff78; color: #10271d; border: 0; border-radius: 5px; font: bold 17px 'Trebuchet MS',sans-serif; cursor: pointer; }
+#shop-area { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+#shop-area article { padding: 16px; border: 1px solid #ffffff25; border-radius: 8px; background: #ffffff05; display: flex; flex-direction: column; }
+#shop-area h3 { margin: 0; font-size: 17px; }
+#shop-area p { color: #b6cbbf; font-size: 13px; flex: 1; }
+#shop-area button { font-size: 13px; }
+#tactical-message { min-height: 24px; color: #dfff78; }
+#puzzle-options button:disabled, #shop-area button:disabled { opacity: .45; cursor: default; }
+@media(max-width:600px) { #tactical-screen { padding: 12px; } .tactical-panel { padding: 15px; } #shop-area { grid-template-columns: repeat(2,minmax(0,1fr)); } #shop-area article { padding: 10px; } #tactical-screen .lobby-header { gap: 8px; font-size: 10px; } }
+.training-viewport { position: relative; width: min(100%, 61.4286vh); margin-inline: auto; }
+#training-map { display: block; width: 100%; height: auto; aspect-ratio: 10 / 7; background: #101c2b; border: 1px solid #5d8299; border-radius: 8px; }
+#training-intro { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; text-align: center; border: 1px solid #7fcfd0; border-radius: 8px; background: #0a1a2bed; color: #edf5eb; }
+#training-intro h2 { color: #dfff78; font-size: clamp(16px,2vw,24px); margin: 0; }
+#training-intro p { font-size: 12px; line-height: 1.7; margin: 0; }
+#training-intro-count { color: #dfff78; font-size: clamp(24px,4vw,42px); line-height: 1; }
+#training-intro span { color: #a6cbd6; font-size: 11px; }
+#training-pad button:disabled { opacity: .4; cursor: default; }
+.training-summary { display: flex; justify-content: space-between; gap: 12px; color: #9dbbcf; font-size: 12px; margin: 8px 0; }
+.training-summary span:last-child { font-size: 10px; }
+#tactical-screen.is-training { background: linear-gradient(120deg,#0a1527fc,#1d344bfc); }
+.is-training .tactical-panel { width: min(1000px,100%); background: #111f30; padding: 18px; }
+.is-training .tactical-panel h1 { font-size: clamp(22px,3vw,32px); }
+.is-training #tactical-instructions { font-size: 13px; margin: 8px 0; }
+.is-training .credit-balance { margin: 8px 0; }
+.is-training #tactical-message { margin: 8px 0; }
+.is-training .room-note { margin: 8px 0 0; font-size: 11px; }
+#training-pad { display: flex; justify-content: center; gap: 8px; margin: 12px 0; touch-action: none; }
+#training-pad button { width: 52px; height: 46px; border: 1px solid #7fcfd0; border-radius: 6px; color: #dbffff; background: #21415c; font-size: 24px; touch-action: none; user-select: none; cursor: pointer; }
+#training-pad button:active { background: #397b87; }
+@media(max-width:600px) { .is-training .tactical-panel { padding: 12px; } .training-summary { font-size: 10px; } .training-summary span:last-child { max-width: 110px; text-align: right; } }

@@ -52,29 +52,89 @@
           <section class="lobby-title"><p class="eyebrow">TEMPORADA 01 / TIERRA ABIERTA</p><h1>OUTPOST<span>ARENA</span></h1><p class="match-tag">TODOS CONTRA TODOS <b>02:00</b></p></section>
           <section class="operator-stage" aria-label="Operador seleccionado"><div class="orbit-ring"></div><img id="skin-preview" alt="" width="360" height="360" /><div class="operator-caption"><span id="skin-role"></span><h2 id="skin-name"></h2></div></section>
           <section class="loadout">
+            <div class="arena-tabs" role="tablist" aria-label="Modo de arena">
+              <button id="tab-clasico" type="button" role="tab" aria-selected="true" aria-controls="arena-mode-panel" data-mode="clasico">Clásico</button>
+              <button id="tab-puzzles" type="button" role="tab" aria-selected="false" aria-controls="arena-mode-panel" data-mode="puzzles" tabindex="-1">Con puzzles</button>
+              <button id="singleplayer-button" type="button" role="tab" aria-selected="false" aria-controls="arena-mode-panel" data-mode="solo" tabindex="-1">Un jugador</button>
+            </div>
+            <div id="arena-mode-panel" role="tabpanel" aria-labelledby="tab-clasico"><p id="mode-description">Combate directo con reapariciones. Reúne a tus amigos y domina la arena.</p></div>
             <div class="section-heading"><h2>Tu operador</h2><span>06 / DISPONIBLES</span></div>
             <div id="skin-picker" role="group" aria-label="Seleccionar skin"></div>
             <div class="match-settings">
               <label for="match-kills">Bajas para ganar<select id="match-kills"><option value="5">5 bajas</option><option value="10" selected>10 bajas</option><option value="20">20 bajas</option><option value="30">30 bajas</option></select></label>
               <label for="match-duration">Tiempo máximo<select id="match-duration"><option value="60">1 minuto</option><option value="120" selected>2 minutos</option><option value="180">3 minutos</option><option value="300">5 minutos</option></select></label>
               <label for="match-bots">Cantidad de bots<select id="match-bots"><option value="0">Sin bots</option><option value="5">5 bots</option><option value="11" selected>11 bots</option><option value="15">15 bots</option><option value="20">20 bots</option></select></label>
+              <label for="match-difficulty">Dificultad de bots<select id="match-difficulty"><option value="facil">Fácil</option><option value="normal" selected>Normal</option><option value="dificil">Difícil</option></select></label>
+              <label for="match-map">Mapa<select id="match-map"><option value="outpost">Isla Outpost</option><option value="orbital">Estación Orbital</option></select></label>
             </div>
+            <div id="map-preview" class="map-preview" data-map="outpost"><span class="map-preview-art" aria-hidden="true"></span><div><strong id="map-name">Isla Outpost</strong><p id="map-description">Bosques, casas y caminos abiertos.</p></div></div>
             <label for="nickname">Nombre de jugador</label><input id="nickname" type="text" maxlength="16" autocomplete="nickname" placeholder="Tu nombre" />
-            <button id="jugar-button" type="button" disabled><span>Jugar ahora</span><i data-lucide="arrow-right"></i></button><p id="connection-status" role="status">Conectando con la arena...</p>
+            <div class="start-actions">
+              <button id="jugar-button" type="button" disabled><span>Crear sala</span><i data-lucide="arrow-right"></i></button>
+            </div>
+            <p id="connection-status" role="status">Conectando con la arena...</p>
+            <section class="map-vote" aria-label="Votación del siguiente mapa" hidden></section>
           </section>
         </main>
         <footer class="lobby-footer"><span>ISLA 01 <b>OUTPOST</b></span><span>10 BAJAS PARA GANAR</span><span id="transport-label">EN LÍNEA</span></footer>
       </div>
     </div>
+    <div id="pantalla-espera" hidden>
+      <section class="room-panel">
+        <header class="lobby-header"><strong>O+</strong><span>OUTPOST / SALA DE ESPERA</span></header>
+        <p class="eyebrow">REÚNE A TU EQUIPO</p><h1>Todo listo para<br><span>entrar en la arena.</span></h1>
+        <p id="room-rules"></p>
+        <ul id="room-players" aria-label="Jugadores en la sala"></ul>
+        <p id="room-status" role="status"></p>
+        <button id="start-match" type="button" hidden>Iniciar partida</button>
+        <button id="close-room" type="button" hidden>Deshacer sala y volver al inicio</button>
+        <p class="room-note">El anfitrión inicia cuando estén todos. Al comenzar, la sala se cierra hasta la siguiente ronda.</p>
+      </section>
+    </div>
     <div id="pantalla-fin">
       <div class="panel-fin">
-        <h1>Fin de la Partida</h1>
+        <header class="lobby-header"><strong>O+</strong><span>OUTPOST / RESULTADOS</span></header>
+        <p class="eyebrow">RONDA COMPLETADA</p><h1>Los mejores de la arena</h1>
+        <section class="map-vote" aria-label="Votación del siguiente mapa" hidden></section>
+        <div id="result-leaders"></div>
+        <h2>Clasificación completa</h2>
         <ul id="podio"></ul>
+        <button id="return-home" type="button">Volver al inicio</button>
+        <p class="room-note">Vota el siguiente mapa. Al terminar la encuesta comenzarás otra ronda automáticamente. Para salir, usa el botón de abandonar.</p>
       </div>
     </div>
     <div id="scoreboard" aria-label="Marcador de eliminaciones"></div>
     <div id="respawn-message" aria-live="polite"></div>
     <canvas id="game"></canvas>
+    <div id="match-countdown" hidden aria-live="polite"><p>¡DOMINA LA ARENA!</p><h2>Elimina a todos los que puedas</h2><strong id="countdown-number"></strong><span>El combate empieza para todos al terminar la cuenta.</span></div>
+    <div id="tactical-screen" hidden>
+      <section class="tactical-panel">
+        <header class="lobby-header"><strong>O+</strong><span>ARENA / PREPARACIÓN TÁCTICA</span><b id="tactical-clock"></b></header>
+        <p class="eyebrow" id="tactical-step"></p><h1 id="tactical-title"></h1>
+        <p id="tactical-instructions"></p><p class="credit-balance"><strong id="tactical-credits">80</strong> CRÉDITOS</p>
+        <div id="puzzle-area">
+          <div class="training-summary"><span id="puzzle-progress"></span><span>SALA INDIVIDUAL / SIN COMBATE</span></div>
+          <div class="training-viewport">
+            <canvas id="training-map" width="1000" height="700" aria-label="Sala de entrenamiento: acércate a la baliza iluminada para recoger energía"></canvas>
+            <div id="training-intro" hidden>
+              <h2>¡CARGA TU ARSENAL!</h2>
+              <p>Acércate a las balizas iluminadas.<br><b>+5 créditos por energía · 6 segundos de luz</b><br>Si no llegas, no pierdes puntos.</p>
+              <strong id="training-intro-count" aria-live="polite"></strong>
+              <span id="training-intro-controls"></span>
+            </div>
+          </div>
+          <div id="training-pad" aria-label="Movimiento del entrenamiento">
+            <button type="button" data-direction="up" aria-label="Mover arriba">↑</button>
+            <button type="button" data-direction="left" aria-label="Mover izquierda">←</button>
+            <button type="button" data-direction="down" aria-label="Mover abajo">↓</button>
+            <button type="button" data-direction="right" aria-label="Mover derecha">→</button>
+          </div>
+        </div>
+        <div id="shop-area" hidden></div>
+        <p id="tactical-message" role="status"></p>
+        <p class="room-note">Todos pasan de fase al mismo tiempo. El equipo comprado se suelta al morir; reapareces con tu pistola básica.</p>
+      </section>
+    </div>
     <div id="move-zone" class="joystick-zone" aria-label="Joystick de movimiento"></div>
     <div id="aim-zone" class="joystick-zone" aria-label="Joystick de apuntado"></div>
     <button id="swap-button" type="button">Cambiar</button>
@@ -83,12 +143,18 @@
     <button id="grenade-button" type="button">💣</button>
 
     <button id="game-settings" class="icon-button settings-trigger" type="button" title="Ajustes de sonido" aria-label="Ajustes de sonido" hidden><i data-lucide="settings-2"></i></button>
+    <button id="leave-match" class="icon-button" type="button" title="Abandonar partida y volver al menú" aria-label="Abandonar partida y volver al menú" hidden><i data-lucide="log-out"></i></button>
     <dialog id="sound-dialog" aria-labelledby="sound-title"><form method="dialog"><div class="section-heading"><h2 id="sound-title">Sonido</h2><button class="icon-button" title="Cerrar" aria-label="Cerrar"><i data-lucide="x"></i></button></div><label for="volume-master">Volumen general <output id="value-master"></output></label><input id="volume-master" type="range" min="0" max="100" /><label for="volume-effects">Efectos <output id="value-effects"></output></label><input id="volume-effects" type="range" min="0" max="100" /><label for="volume-ambient">Ambiente <output id="value-ambient"></output></label><input id="volume-ambient" type="range" min="0" max="100" /><label class="mute-row" for="mute-audio"><span>Silenciar todo</span><input id="mute-audio" type="checkbox" /></label></form></dialog>
     <script src="/vendor/lucide.js"></script>
     <script src="/js/assets.js"></script>
     <script src="/js/buildings.js"></script>
+    <script src="/js/zones.js"></script>
+    <script src="/js/maps.js"></script>
     <script src="/js/lobby.js"></script>
     <script src="/js/world.js"></script>
+    <script src="/js/weapon-audio.js"></script>
     <script src="/js/game.js"></script>
+    <script src="/js/tactical-ui.js"></script>
+    <script src="/js/training-map.js"></script>
   </body>
 </html>

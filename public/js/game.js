@@ -8,6 +8,7 @@ const inicioScreen = document.getElementById('pantalla-inicio');
 const finishScreen = document.getElementById('pantalla-fin');
 const nicknameInput = document.getElementById('nickname');
 const playButton = document.getElementById('jugar-button');
+const singlePlayerButton = document.getElementById('singleplayer-button');
 const podiumList = document.getElementById('podio');
 // Adaptador: el resto del juego llama a network.send/on sin conocer el transporte.
 const network = {
@@ -38,6 +39,8 @@ let gameStarted = false;
 let gameFinished = false;
 let networkReady = false;
 let tiempoPartida = 120;
+let joinRequestPending = false;
+let soloModeLocked = false;
 
 // ---- Animaciones de consumibles ----
 // { tipo: 'vida'|'escudo', inicio: ms, duracion: ms }
@@ -68,6 +71,60 @@ let audioCtx = null;
 let masterGain = null;
 let effectsGain = null;
 let ambientGain = null;
+let menuMusicGain = null;
+let menuMusicTimer = null;
+let menuNextChord = 0;
+let menuChordIndex = 0;
+const menuNotes = new Set();
+const menuChords = [[45, 52, 59, 64], [48, 55, 62, 67], [41, 48, 55, 60], [43, 50, 57, 62]];
+function stopMenuMusic() {
+  if (menuMusicTimer !== null) clearInterval(menuMusicTimer);
+  menuMusicTimer = null;
+  for (const oscillator of menuNotes) oscillator.stop();
+  menuNotes.clear();
+}
+function scheduleMenuMusic() {
+  while (menuNextChord < audioCtx.currentTime + 8) {
+    const chord = menuChords[menuChordIndex % menuChords.length];
+    for (const [index, note] of chord.entries()) {
+      for (const detune of [-5, 5]) {
+        const oscillator = audioCtx.createOscillator();
+        const envelope = audioCtx.createGain();
+        const filter = audioCtx.createBiquadFilter();
+        const start = menuNextChord + index * 0.12;
+        oscillator.type = index === 0 ? 'sine' : 'triangle';
+        oscillator.frequency.value = 440 * 2 ** ((note - 69) / 12);
+        oscillator.detune.value = detune;
+        filter.type = 'lowpass';
+        filter.frequency.value = 850;
+        filter.Q.value = 0.5;
+        oscillator.connect(filter); filter.connect(envelope); envelope.connect(menuMusicGain);
+        envelope.gain.setValueAtTime(0, start);
+        envelope.gain.linearRampToValueAtTime(index === 0 ? 0.1 : 0.045, start + 1.8);
+        envelope.gain.setValueAtTime(index === 0 ? 0.1 : 0.045, start + 4);
+        envelope.gain.linearRampToValueAtTime(0, start + 7);
+        oscillator.onended = () => {
+          oscillator.disconnect(); filter.disconnect(); envelope.disconnect(); menuNotes.delete(oscillator);
+        };
+        menuNotes.add(oscillator);
+        oscillator.start(start); oscillator.stop(start + 7);
+      }
+    }
+    menuNextChord += 6;
+    menuChordIndex += 1;
+  }
+}
+function updateMenuMusic() {
+  const audible = audioCtx.state === 'running' && !document.hidden && !ArenaUI.muted
+    && ArenaUI.master > 0 && ArenaUI.ambient > 0 && !gameStarted && !gameFinished
+    && inicioScreen.style.display !== 'none' && waitingScreen.hidden;
+  if (!audible) { stopMenuMusic(); return; }
+  if (menuMusicTimer !== null) return;
+  menuNextChord = audioCtx.currentTime + 0.05;
+  menuChordIndex = 0;
+  scheduleMenuMusic();
+  menuMusicTimer = setInterval(scheduleMenuMusic, 1000);
+}
 const resultNotes = new Set();
 function stopResultMusic() {
   for (const oscillator of resultNotes) oscillator.stop();
@@ -100,9 +157,12 @@ function playResultMusic(victory) {
 }
 function updateAudioLevels() {
   if (!audioCtx) return;
+  if (ArenaUI.muted || document.hidden || !gameStarted || ArenaUI.effects === 0 || ArenaUI.master === 0) WeaponAudio.stopAll(audioCtx);
   masterGain.gain.value = ArenaUI.muted || document.hidden ? 0 : ArenaUI.master;
   effectsGain.gain.value = ArenaUI.effects;
   ambientGain.gain.value = gameStarted ? ArenaUI.ambient * 0.025 : 0;
+  menuMusicGain.gain.value = ArenaUI.ambient;
+  updateMenuMusic();
 }
 window.addEventListener('audio-settings', updateAudioLevels);
 document.addEventListener('visibilitychange', updateAudioLevels);
@@ -112,9 +172,12 @@ function getAudioCtx() {
     masterGain = audioCtx.createGain();
     effectsGain = audioCtx.createGain();
     ambientGain = audioCtx.createGain();
+    menuMusicGain = audioCtx.createGain();
     effectsGain.connect(masterGain);
     ambientGain.connect(masterGain);
+    menuMusicGain.connect(masterGain);
     masterGain.connect(audioCtx.destination);
+    for (const weapon of ['pistola', 'rifle', 'escopeta', 'sniper']) WeaponAudio.createBuffer(audioCtx, weapon);
     const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 3, audioCtx.sampleRate);
     const samples = buffer.getChannelData(0);
     for (let index = 0; index < samples.length; index += 1) samples[index] = Math.random() * 2 - 1;
@@ -125,9 +188,17 @@ function getAudioCtx() {
     breeze.connect(filter); filter.connect(ambientGain); breeze.start();
     updateAudioLevels();
   }
-  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().then(updateAudioLevels).catch(error => console.warn('No se pudo activar el audio:', error));
+  }
   return audioCtx;
 }
+function unlockMenuAudio() {
+  if (audioCtx && audioCtx.state !== 'suspended') return;
+  try { getAudioCtx(); } catch (error) { console.warn('No se pudo iniciar el audio del menú:', error); }
+}
+document.addEventListener('pointerdown', unlockMenuAudio);
+document.addEventListener('keydown', unlockMenuAudio);
 function playTone(frecuencia, tipo, duracion, volumen = 0.18) {
   try {
     const ctx2 = getAudioCtx();
@@ -143,7 +214,15 @@ function playTone(frecuencia, tipo, duracion, volumen = 0.18) {
     osc.stop(ctx2.currentTime + duracion);
   } catch { /* silencio si no hay permisos */ }
 }
-function playShoot() { playTone(280, 'sawtooth', 0.08, 0.12); }
+function playShoot(weapon, options) {
+  if (document.hidden || ArenaUI.muted || ArenaUI.master === 0 || ArenaUI.effects === 0) return;
+  if (weapon === 'puños') { playTone(100, 'triangle', 0.065, 0.12); return; }
+  try {
+    WeaponAudio.play(getAudioCtx(), effectsGain, weapon, options);
+  } catch (error) {
+    console.warn(`No se pudo reproducir el disparo de ${weapon}:`, error);
+  }
+}
 function playHit() { playTone(180, 'square', 0.12, 0.25); }
 function playPickup() { playTone(660, 'sine', 0.18, 0.15); }
 function playExplosion() { playTone(80, 'sawtooth', 0.4, 0.5); }
@@ -155,12 +234,17 @@ function vibrar(ms = 60) {
 }
 
 /** Ordena el estado recibido y actualiza el marcador visible en pantalla. */
+let scoreboardSignature = '';
 function actualizarScoreboard(jugadoresRecibidos) {
   const ranking = Object.entries(jugadoresRecibidos)
     .filter(([, jugador]) => jugador.unido)
-    .sort(([, jugadorA], [, jugadorB]) => (jugadorB.kills || 0) - (jugadorA.kills || 0));
+    .sort(([, jugadorA], [, jugadorB]) => (jugadorB.kills || 0) - (jugadorA.kills || 0))
+    .slice(0, isMobile ? 3 : 8);
+  const signature = JSON.stringify(ranking.map(([id, jugador]) => [id, jugador.nombre, jugador.kills || 0]));
+  if (signature === scoreboardSignature) return;
+  scoreboardSignature = signature;
 
-  scoreboard.replaceChildren(...ranking.slice(0, isMobile ? 3 : 8).map(([, jugador], index) => {
+  scoreboard.replaceChildren(...ranking.map(([, jugador], index) => {
     const row = document.createElement('div');
     row.textContent = `${jugador.nombre || `Jugador ${index + 1}`}: ${jugador.kills || 0}`;
     return row;
@@ -214,37 +298,199 @@ network.on('identidad', ({ id }) => {
   network.id = id;
 });
 
+let currentRoom = null;
+let resultsPinned = false;
+let preparacionRestante = 0;
+let currentVote = null;
+const waitingScreen = document.getElementById('pantalla-espera');
+for (const panel of document.querySelectorAll('.map-vote')) {
+  const title = document.createElement('h2');
+  title.textContent = 'Siguiente destino';
+  const status = document.createElement('p');
+  status.className = 'vote-status';
+  status.setAttribute('role', 'status');
+  const choices = document.createElement('div');
+  choices.className = 'vote-choices';
+  for (const map of ArenaMaps.catalog) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.voteMap = map.id;
+    button.addEventListener('click', () => network.send('votarMapa', { mapa: map.id }));
+    choices.append(button);
+  }
+  panel.append(title, status, choices);
+}
+function renderMapVote(state) {
+  currentVote = state;
+  for (const panel of document.querySelectorAll('.map-vote')) {
+    panel.hidden = !state;
+    if (!state) continue;
+    const eligible = state.electores.includes(network.id);
+    const winner = ArenaMaps.catalog.find(map => map.id === state.ganador);
+    panel.querySelector('.vote-status').textContent = state.activa
+      ? `${state.segundos} s para votar. ${eligible ? 'Puedes cambiar tu voto.' : 'Votan quienes terminaron la ronda.'} En empate se conserva el mapa actual.`
+      : `Próximo mapa: ${winner.nombre}. La siguiente ronda comienza automáticamente.`;
+    for (const button of panel.querySelectorAll('[data-vote-map]')) {
+      const count = state.recuento[button.dataset.voteMap];
+      button.textContent = `${ArenaMaps.catalog.find(map => map.id === button.dataset.voteMap).nombre} · ${count} ${count === 1 ? 'voto' : 'votos'}`;
+      button.disabled = !state.activa || !eligible;
+      button.setAttribute('aria-pressed', String(state.votos[network.id] === button.dataset.voteMap));
+    }
+  }
+}
+network.on('estadoVotacion', state => {
+  if (currentRoom) currentRoom.votacion = state;
+  renderMapVote(state);
+});
+network.on('votoRechazado', ({ motivo }) => {
+  for (const status of document.querySelectorAll('.vote-status')) status.textContent = motivo;
+});
+network.on('estadoSala', (room) => {
+  currentRoom = room;
+  renderMapVote(room.votacion);
+  if (resultsPinned) return;
+  const voteActive = room.votacion?.activa === true;
+  if (voteActive) {
+    playButton.disabled = true;
+    singlePlayerButton.disabled = true;
+    document.getElementById('connection-status').textContent = 'Votación del siguiente mapa en curso...';
+    return;
+  }
+  for (const tab of document.querySelectorAll('[data-mode]')) tab.disabled = !!room.anfitrionId || room.activa;
+  if (room.anfitrionId) window.selectArenaMode(room.reglas.soloJugador ? 'solo' : room.reglas.modoArena || 'clasico', false);
+  const member = room.jugadores.some(j => j.id === network.id);
+  window.selectArenaMap(room.reglas.mapa || room.mapaSiguiente || ArenaUI.mapa);
+  document.getElementById('match-map').disabled = !!room.anfitrionId || room.activa || !!room.mapaSiguiente;
+  document.getElementById('leave-match').hidden = !member;
+  if (room.activa || room.finalizada) {
+    waitingScreen.hidden = true;
+    if (!member) {
+      const puedeVolver = room.activa && room.reingresos?.includes(network.id);
+      playButton.disabled = !networkReady || !puedeVolver;
+      soloModeLocked = !puedeVolver;
+      singlePlayerButton.disabled = true;
+      playButton.querySelector('span').textContent = puedeVolver ? 'Volver a la partida' : 'Unirse a la sala';
+      document.getElementById('connection-status').textContent = puedeVolver
+        ? 'Tu partida sigue en curso. Puedes volver a unirte.'
+        : 'Partida en curso. Espera a la siguiente ronda.';
+    }
+    updateAudioLevels();
+    return;
+  }
+  soloModeLocked = !!room.reglas.soloJugador && !member;
+  playButton.disabled = !networkReady || soloModeLocked;
+  singlePlayerButton.disabled = !networkReady || !!room.anfitrionId;
+  playButton.querySelector('span').textContent = room.anfitrionId ? 'Unirse a la sala' : 'Crear sala';
+  document.querySelector('.match-settings').hidden = !!room.anfitrionId;
+  document.getElementById('skin-picker').hidden = false;
+  document.getElementById('connection-status').textContent = soloModeLocked ? 'Sala individual ocupada' : room.anfitrionId ? 'Sala disponible. Escribe tu nombre para unirte.' : 'Crea una sala para reunir a los jugadores.';
+  waitingScreen.hidden = !member;
+  if (!member) {
+    if (!gameStarted && !gameFinished) inicioScreen.style.display = 'flex';
+    updateAudioLevels();
+    return;
+  }
+  joinRequestPending = false;
+  inicioScreen.style.display = 'none';
+  finishScreen.style.display = 'none';
+  waitingScreen.hidden = false;
+  updateAudioLevels();
+  const list = document.getElementById('room-players');
+  list.replaceChildren();
+  for (const j of room.jugadores) {
+    const row = document.createElement('li');
+    const portrait = new Image(48,48);
+    const skin = GameAssets.skins.find(s => s.id === j.skin) || GameAssets.skins[0];
+    portrait.src = GameAssets.skinUrl(skin); portrait.alt = '';
+    const name = document.createElement('span');
+    name.textContent = j.nombre + (j.id === network.id ? ' (tú)' : '');
+    const badge = document.createElement('b');
+    badge.textContent = j.id === room.anfitrionId ? 'ANFITRIÓN' : 'EN SALA';
+    row.append(portrait,name,badge); list.append(row);
+  }
+  const host = room.anfitrionId === network.id;
+  document.getElementById('start-match').hidden = !host;
+  document.getElementById('close-room').hidden = !host;
+  document.getElementById('room-status').textContent = host ? 'Confirma que están todos y pulsa Iniciar partida.' : 'Esperando a que el anfitrión inicie la partida…';
+  const difficulty = { facil: 'Fácil', normal: 'Normal', dificil: 'Difícil' }[room.reglas.dificultadBots] || 'Normal';
+  const mapName = ArenaMaps.catalog.find(map => map.id === room.reglas.mapa)?.nombre || 'Isla Outpost';
+  document.getElementById('room-rules').textContent = mapName + ' · ' + (room.reglas.modoArena === 'puzzles' ? 'CON PUZZLES · ' : 'CLÁSICO · ') + room.jugadores.length + ' jugadores · ' + room.reglas.cantidadBots + ' bots (' + difficulty + ') · ' + room.reglas.limiteKills + ' bajas · ' + room.reglas.duracion / 60 + ' min';
+});
+function actualizarCuentaInicio() {
+  const overlay = document.getElementById('match-countdown');
+  overlay.hidden = !gameStarted || preparacionRestante <= 0 || resultsPinned;
+  document.getElementById('countdown-number').textContent = preparacionRestante > 3 ? 'PREPÁRATE' : preparacionRestante;
+}
+document.getElementById('close-room').addEventListener('click', () => network.send('cerrarSala', {}));
+document.getElementById('leave-match').addEventListener('click', () => network.send('abandonarPartida', {}));
+network.on('salidaPartida', () => {
+  resultsPinned = false;
+  network.receive('reinicioPartida', {});
+  if (currentRoom) network.receive('estadoSala', currentRoom);
+});
+document.getElementById('return-home').addEventListener('click', () => {
+  resultsPinned = false;
+  network.receive('reinicioPartida', {});
+  if (currentRoom) network.receive('estadoSala', currentRoom);
+});
+
+document.getElementById('start-match').addEventListener('click', () => {
+  network.send('iniciarSala', {});
+});
+
 network.on('configPartida', (rules) => {
-  const locked = rules.activa || rules.finalizada;
-  for (const [id, field] of [['match-kills', 'limiteKills'], ['match-duration', 'duracion'], ['match-bots', 'cantidadBots']]) {
+  const locked = rules.activa || rules.finalizada || rules.votacionActiva;
+  window.selectArenaMap(locked ? rules.mapa : rules.mapaSiguiente || ArenaUI.mapa);
+  document.getElementById('match-map').disabled = locked || !!rules.mapaSiguiente;
+  for (const [id, field] of [['match-kills', 'limiteKills'], ['match-duration', 'duracion'], ['match-bots', 'cantidadBots'], ['match-difficulty', 'dificultadBots']]) {
     const select = document.getElementById(id);
     select.disabled = locked;
     select.value = locked ? rules[field] : ArenaUI[field];
   }
   document.querySelector('.lobby-footer > span:nth-child(2)').textContent = `${rules.limiteKills} BAJAS PARA GANAR`;
   document.querySelector('.match-tag b').textContent = `${String(rules.duracion / 60).padStart(2, '0')}:00`;
+  soloModeLocked = rules.activa && rules.soloJugador && !joinRequestPending && !gameStarted;
+  if (soloModeLocked) {
+    playButton.disabled = true;
+    singlePlayerButton.disabled = true;
+    document.getElementById('connection-status').textContent = 'Esta partida es individual y ya está en curso';
+  }
   if (rules.finalizada) {
     playButton.disabled = true;
+    singlePlayerButton.disabled = true;
     document.getElementById('connection-status').textContent = 'Ronda terminada. Preparando la siguiente...';
   } else if (rules.activa && !gameStarted) {
     document.getElementById('connection-status').textContent = 'Partida en curso';
   }
 });
 
-network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, obstaculos: obstaculosDelServidor }) => {
+network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, mapa = 'outpost', obstaculos: obstaculosDelServidor, zonasEspeciales }) => {
+  WorldArt.setMap(mapa);
+  if (zonasEspeciales) SpecialZones.zones.splice(0, SpecialZones.zones.length, ...zonasEspeciales);
   mapWidth = MAP_WIDTH;
   mapHeight = MAP_HEIGHT;
   obstaculos = obstaculosDelServidor || [];
 });
 
-network.on('inicioPartida', ({ tiempoRestante }) => {
-  stopResultMusic();
+network.on('inicioPartida', ({ tiempoRestante, preparacionRestante: countdown = 0, preparacionTactica = null }) => {
+  if (!currentRoom?.jugadores.some(j => j.id === network.id)) return;
+  resultsPinned = false;
+  keys.clear();
+  fireHeld = false;
+  Object.assign(movement, { x: 0, y: 0 });
+  Object.assign(aim, { x: 0, y: 0 });
+  joinRequestPending = false;
   gameStarted = true;
+  preparacionRestante = countdown;
+  actualizarCuentaInicio();
+  waitingScreen.hidden = true;
+  stopResultMusic();
   gameFinished = false;
   tiempoPartida = tiempoRestante ?? 120;
   inicioScreen.style.display = 'none';
   finishScreen.style.display = 'none';
   setGameVisibility(true);
+  window.renderTactical?.(preparacionTactica);
   updateAudioLevels();
 });
 
@@ -258,29 +504,87 @@ network.on('finDeJuego', (podio) => {
   gameFinished = true;
   setGameVisibility(false);
   updateAudioLevels();
+  resultsPinned = true;
+  window.renderTactical?.(null);
+  preparacionRestante = 0;
+  actualizarCuentaInicio();
   podiumList.replaceChildren();
-  playResultMusic(podio.some((jugador) => jugador.id === network.id));
+  playResultMusic(podio.slice(0, 3).some((jugador) => jugador.id === network.id));
+  const leaders = document.getElementById('result-leaders');
+  leaders.replaceChildren();
+  podio.slice(0,3).forEach((j, index) => {
+    const card = document.createElement('article');
+    const position = document.createElement('b'); position.textContent = '#' + (index + 1);
+    const portrait = new Image(96,96);
+    portrait.src = GameAssets.skinUrl(GameAssets.skins.find(s => s.id === j.skin) || GameAssets.skins[0]); portrait.alt = '';
+    const name = document.createElement('h3'); name.textContent = j.nombre;
+    const score = document.createElement('p'); score.textContent = j.kills + ' bajas';
+    card.append(position,portrait,name,score); leaders.append(card);
+  });
   podio.forEach((jugador, index) => {
     const item = document.createElement('li');
-    item.textContent = `${index + 1}. ${jugador.nombre} - ${jugador.kills} Kills`;
+    if (jugador.id === network.id) item.classList.add('own-score');
+    item.textContent = `${index + 1}. ${jugador.nombre} — ${jugador.kills} bajas`;
     podiumList.appendChild(item);
   });
   finishScreen.style.display = 'flex';
+  finishScreen.scrollTop = 0;
 });
 
 network.on('reinicioPartida', () => {
+  if (resultsPinned) return;
+  window.renderTactical?.(null);
   stopResultMusic();
   gameStarted = false;
   gameFinished = false;
+  joinRequestPending = false;
+  soloModeLocked = false;
+  preparacionRestante = 0;
+  actualizarCuentaInicio();
+  waitingScreen.hidden = true;
+  keys.clear();
+  fireHeld = false;
+  Object.assign(movement, { x: 0, y: 0 });
+  Object.assign(aim, { x: 0, y: 0 });
+  document.getElementById('sound-dialog').close();
   tiempoPartida = 120;
   setGameVisibility(false);
   finishScreen.style.display = 'none';
   inicioScreen.style.display = 'flex';
   nicknameInput.value = ArenaUI.name;
   playButton.disabled = !networkReady;
+  singlePlayerButton.disabled = !networkReady;
+  updateAudioLevels();
 });
 
-network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor, cofres: cofresServidor }) => {
+network.on('entradaRechazada', ({ motivo } = {}) => {
+  if (motivo === 'votacionEnCurso') {
+    joinRequestPending = false;
+    playButton.disabled = true;
+    document.getElementById('connection-status').textContent = 'Espera a que termine la votación del mapa.';
+    return;
+  }
+  if (motivo === 'partidaEnCurso') {
+    joinRequestPending = false;
+    playButton.disabled = true;
+    singlePlayerButton.disabled = true;
+    document.getElementById('connection-status').textContent = 'Partida en curso. Espera a la siguiente ronda.';
+    return;
+  }
+  joinRequestPending = false;
+  soloModeLocked = motivo === 'soloJugador';
+  playButton.disabled = !networkReady || soloModeLocked || gameFinished;
+  singlePlayerButton.disabled = !networkReady || soloModeLocked || gameFinished;
+  document.getElementById('connection-status').textContent = soloModeLocked
+    ? 'Esta partida es individual y no admite más jugadores'
+    : 'La ronda actual es multijugador; elige “Jugar ahora” para unirte';
+});
+
+const environmentalDamage = {};
+network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelServidor, plataformas: plataformasDelServidor, obstaculos: obstaculosDelServidor, itemsEnSuelo: itemsDelServidor, granadas: granadasDelServidor, zonaSegura: zonaDelServidor, cofres: cofresServidor, preparacionRestante: countdown = 0, preparacionTactica = null }) => {
+  preparacionRestante = countdown;
+  actualizarCuentaInicio();
+  window.renderTactical?.(preparacionTactica);
   cofres = cofresServidor || [];
   const jugadoresAnteriores = jugadores;
   jugadores = jugadoresDelServidor;
@@ -291,6 +595,17 @@ network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelSer
   granadosEnVuelo = granadasDelServidor || [];
   if (zonaDelServidor) zonaSegura = zonaDelServidor;
   actualizarScoreboard(jugadores);
+  const oyente = jugadores[network.id];
+  if (gameStarted && !gameFinished && oyente?.unido && !oyente.muerto) {
+    for (const [id, jugador] of Object.entries(jugadores)) {
+      if (id === network.id || !jugador.unido || !jugadoresAnteriores[id]?.unido
+        || jugador.ultimoDisparo <= (jugadoresAnteriores[id].ultimoDisparo || 0)
+        || !WeaponAudio.has(jugador.ultimoDisparoArma)) continue;
+      const dx = jugador.x - oyente.x, distance = Math.hypot(dx, jugador.y - oyente.y);
+      if (distance > 1800 || Buildings.concealed(obstaculos, jugador, oyente)) continue;
+      playShoot(jugador.ultimoDisparoArma, { volume: 0.65 * (1 - distance / 1800) ** 2, pan: dx / 1200 });
+    }
+  }
 
   // ---- Daño flotante: detecta cambios de vida/escudo ----
   const ahora = performance.now();
@@ -305,8 +620,14 @@ network.on('estadoJuego', ({ jugadores: jugadoresDelServidor, balas: balasDelSer
       continue;
     }
 
-    if (Math.round(deltaVida) > 0 && !jugador.muerto) {
-      floatingNumbers.push({ playerId: id, x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 30, valor: `-${Math.round(deltaVida)}`, color: '#ef5350', nacido: ahora, vida: 1000 });
+    if (SpecialZones.effects(jugador).damagePerSecond === 0) delete environmentalDamage[id];
+    if (deltaVida > 0 && deltaVida < 1 && SpecialZones.effects(jugador).damagePerSecond > 0) {
+      environmentalDamage[id] = (environmentalDamage[id] || 0) + deltaVida;
+    }
+    const damageShown = deltaVida >= 1 ? Math.round(deltaVida) : Math.floor((environmentalDamage[id] || 0) + 0.0001);
+    if (damageShown > 0 && !jugador.muerto) {
+      environmentalDamage[id] = 0;
+      floatingNumbers.push({ playerId: id, x: jugador.x + (Math.random() - 0.5) * 30, y: jugador.y - 30, valor: `-${damageShown}`, color: '#ef5350', nacido: ahora, vida: 1000 });
       if (id === network.id) { startShake(6, 200); vibrar(40); playHit(); }
     }
     if (Math.round(deltaEscudo) > 0 && !jugador.muerto) {
@@ -384,9 +705,9 @@ async function connectNetwork() {
       socket.on('disconnect', () => setConnectionState(false));
       socket.on('connect_error', () => setConnectionState(false));
       for (const type of [
-        'configMapa', 'estadoJuego', 'jugadorDesconectado', 'inicioPartida',
+        'estadoSala', 'configMapa', 'estadoJuego', 'jugadorDesconectado', 'inicioPartida',
         'tiempoPartida', 'finDeJuego', 'reinicioPartida', 'kill', 'explosion', 'zonaActualizada',
-        'configPartida',
+        'configPartida', 'entradaRechazada', 'salidaPartida', 'estadoVotacion', 'votoRechazado',
       ]) {
         socket.on(type, (data) => network.receive(type, data));
       }
@@ -420,9 +741,14 @@ connectNetwork();
 
 function setConnectionState(ready) {
   networkReady = ready;
-  playButton.disabled = !ready || gameFinished;
+  playButton.disabled = !ready || gameFinished || soloModeLocked;
+  singlePlayerButton.disabled = !ready || gameFinished || soloModeLocked;
   document.getElementById('connection-status').textContent = ready ? 'Arena disponible' : 'Sin conexión. Reconectando...';
   if (!ready) {
+    window.renderTactical?.(null);
+    preparacionRestante = 0;
+    actualizarCuentaInicio();
+    joinRequestPending = false;
     gameStarted = false;
     keys.clear();
     Object.assign(movement, { x: 0, y: 0 });
@@ -435,6 +761,7 @@ function setConnectionState(ready) {
 
 function setGameVisibility(visible) {
   document.getElementById('game-settings').hidden = !visible;
+  document.getElementById('leave-match').hidden = !visible;
   const elements = [scoreboard, swapButton, reloadButton, respawnMessage,
     document.getElementById('drop-button'), document.getElementById('grenade-button'),
     document.getElementById('move-zone'), document.getElementById('aim-zone')];
@@ -443,17 +770,23 @@ function setGameVisibility(visible) {
   });
 }
 
-playButton.addEventListener('click', () => {
+function requestJoin(soloJugador) {
   const nombre = nicknameInput.value.trim();
   if (!nombre) { nicknameInput.focus(); document.getElementById('connection-status').textContent = 'Escribe tu nombre para entrar'; return; }
-  if (!networkReady || gameStarted || gameFinished) return;
+  if (!networkReady || gameStarted || gameFinished || soloModeLocked || currentVote?.activa) return;
   try { getAudioCtx(); } catch {}
   playButton.disabled = true;
+  singlePlayerButton.disabled = true;
+  joinRequestPending = true;
   network.send('unirse', { nombre, skin: ArenaUI.skin,
+    mapa: document.getElementById('match-map').value,
     limiteKills: Number(document.getElementById('match-kills').value),
     cantidadBots: Number(document.getElementById('match-bots').value),
-    duracion: Number(document.getElementById('match-duration').value) });
-});
+    dificultadBots: document.getElementById('match-difficulty').value,
+    duracion: Number(document.getElementById('match-duration').value), soloJugador, modoArena: ArenaUI.modo === 'puzzles' ? 'puzzles' : 'clasico' });
+}
+
+playButton.addEventListener('click', () => requestJoin(ArenaUI.modo === 'solo'));
 
 nicknameInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') playButton.click();
@@ -516,6 +849,7 @@ canvas.addEventListener('mousemove', (event) => {
 
 // ----- Disparo ------------------------------------------------------------
 function shoot() {
+  if (preparacionRestante > 0 || (window.tacticalState && ['instrucciones', 'puzzles', 'tienda'].includes(window.tacticalState.phase))) return false;
   if (!gameStarted || gameFinished) return false;
   const jugadorLocal = jugadores[network.id];
   if (!jugadorLocal || jugadorLocal.muerto || document.hidden || document.getElementById('sound-dialog').open) return false;
@@ -561,7 +895,7 @@ function shoot() {
 
   lastShotTime = ahora;
   network.send('disparar', { x: player.x, y: player.y, angle: player.angle });
-  playShoot();
+  playShoot(arma);
   return true;
 }
 
@@ -578,7 +912,7 @@ function throwGrenade() {
   // Optimistic: quita la granada localmente
   jugadorLocal.inventario[slotGranada] = null;
   network.send('lanzarGranada', { angle: player.angle });
-  playShoot();
+  playTone(140, 'triangle', 0.08, 0.1);
 }
 
 function requestReload() {
@@ -670,10 +1004,10 @@ function getNearbyChest(jugador) {
 
 function getNearbyDoor(jugadorLocal) {
   if (!jugadorLocal || jugadorLocal.muerto) return null;
-  return obstaculos.filter(Buildings.isBuilding).map((building) => {
-    const door = Buildings.door(building);
-    return { building, distance: Math.hypot(jugadorLocal.x - door.x - door.width / 2, jugadorLocal.y - door.y - door.height / 2) };
-  }).filter((candidate) => candidate.distance <= 105).sort((left, right) => left.distance - right.distance)[0]?.building || null;
+  return obstaculos.filter(Buildings.isBuilding).flatMap(building => Buildings.doors(building).map(door => ({
+    puertaAbierta: door.abierta, compuerta: !!building.puertas,
+    distance: Math.hypot(jugadorLocal.x - door.x - door.width / 2, jugadorLocal.y - door.y - door.height / 2),
+  }))).filter((candidate) => candidate.distance <= 105).sort((left, right) => left.distance - right.distance)[0] || null;
 }
 
 // En móvil, el botón solo se muestra cuando el cliente detecta una oportunidad válida.
@@ -717,6 +1051,7 @@ function createMobileControls() {
 if (isMobile) loadNippleJS().then(createMobileControls).catch(console.error);
 
 function update(deltaSeconds) {
+  if (preparacionRestante > 0 || (window.tacticalState && ['instrucciones', 'puzzles', 'tienda'].includes(window.tacticalState.phase))) { fireHeld = false; return; }
   if (document.getElementById('sound-dialog').open) { fireHeld = false; return; }
   if (!gameStarted || gameFinished || jugadores[network.id]?.muerto) fireHeld = false;
   let moveX = movement.x;
@@ -728,8 +1063,9 @@ function update(deltaSeconds) {
 
   const magnitude = Math.hypot(moveX, moveY);
   if (magnitude > 0) {
-    player.x += (moveX / magnitude) * player.speed * deltaSeconds;
-    player.y += (moveY / magnitude) * player.speed * deltaSeconds;
+    const multiplier = SpecialZones.effects(player).speedMultiplier;
+    player.x += (moveX / magnitude) * player.speed * multiplier * deltaSeconds;
+    player.y += (moveY / magnitude) * player.speed * multiplier * deltaSeconds;
     // Predicción local: el límite se aplica aquí y también de forma autoritativa en el servidor.
     player.x = Math.max(0, Math.min(mapWidth, player.x));
     player.y = Math.max(0, Math.min(mapHeight, player.y));
@@ -980,17 +1316,37 @@ function drawMinimap() {
   ctx.clip();
 
   // Suelo
-  ctx.fillStyle = '#2a3a2a';
+  ctx.fillStyle = WorldArt.map === 'orbital' ? '#1d3046' : '#2a3a2a';
   ctx.fillRect(mx, my, MM_W, MM_H);
+  if (WorldArt.map === 'orbital') {
+    const layout = ArenaMaps.stationLayout();
+    ctx.fillStyle = '#040813';
+    ctx.fillRect(mx, my, MM_W, MM_H);
+    ctx.fillStyle = '#567b95';
+    for (const floor of [...layout.corridors, ...layout.exterior, ...layout.rooms]) {
+      ctx.fillRect(mx + floor.x * scaleX, my + floor.y * scaleY, floor.width * scaleX, floor.height * scaleY);
+    }
+  }
   ctx.strokeStyle = '#a9ebf0';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.arc(mx + zonaSegura.x * scaleX, my + zonaSegura.y * scaleY, zonaSegura.radio * scaleX, 0, Math.PI * 2);
   ctx.stroke();
+  if (zonaSegura.objetivo) {
+    ctx.save();
+    ctx.strokeStyle = '#fff';
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.arc(mx + zonaSegura.objetivo.x * scaleX, my + zonaSegura.objetivo.y * scaleY,
+      zonaSegura.objetivo.radio * scaleX, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Obstáculos
   ctx.fillStyle = '#7a6a4a';
   for (const obs of obstaculos) {
+    if (WorldArt.map === 'orbital' && (obs.tipo === 'casco' || Buildings.isBuilding(obs))) continue;
     ctx.fillRect(
       mx + obs.x * scaleX,
       my + obs.y * scaleY,
@@ -1192,6 +1548,17 @@ function drawZonaSegura(camX, camY) {
   const sx = zonaSegura.x - camX + window.innerWidth / 2;
   const sy = zonaSegura.y - camY + window.innerHeight / 2;
   const r = zonaSegura.radio;
+  if (zonaSegura.objetivo) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.setLineDash([10, 10]);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(zonaSegura.objetivo.x - camX + window.innerWidth / 2,
+      zonaSegura.objetivo.y - camY + window.innerHeight / 2, zonaSegura.objetivo.radio, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Overlay rojo: rectángulo completo con hueco circular usando "evenodd"
   // Esto NO usa destination-out, por lo que no borra el canvas subyacente.
@@ -1253,6 +1620,12 @@ function drawGranadas(camX, camY) {
 // ---- Borde rojo cuando vida < 25 ----
 function drawRedVignette(jugadorLocal) {
   if (!jugadorLocal || jugadorLocal.muerto) return;
+  if (gameStarted && !gameFinished && SpecialZones.effects(jugadorLocal).damagePerSecond > 0) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(200,20,20,0.18)';
+    ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+    ctx.restore();
+  }
   const vida = jugadorLocal.vida ?? 100;
   if (vida >= 25) return;
   const alpha = 0.12 + 0.22 * (1 - vida / 25) * (0.7 + 0.3 * Math.abs(Math.sin(performance.now() / 400)));
@@ -1276,6 +1649,13 @@ function drawMatchTimer() {
   const minutos = Math.floor(tiempoPartida / 60);
   const segundos = String(tiempoPartida % 60).padStart(2, '0');
   ctx.fillText(`Tiempo: ${minutos}:${segundos}`, window.innerWidth / 2, 32);
+  if (zonaSegura.estado) {
+    ctx.font = `bold ${isMobile ? 12 : 15}px sans-serif`;
+    ctx.fillStyle = zonaSegura.estado === 'cerrando' ? '#ffb58c' : '#e4f5ff';
+    const label = zonaSegura.estado === 'final' ? 'Tormenta: círculo final'
+      : `${zonaSegura.estado === 'cerrando' ? 'La tormenta se cierra' : 'Próximo cierre'}: ${zonaSegura.segundosEtapa ?? 0}s`;
+    ctx.fillText(label, window.innerWidth / 2, 53);
+  }
   ctx.restore();
 }
 
@@ -1286,6 +1666,11 @@ function draw() {
 
   const jugadorLocal = gameStarted ? (jugadores[network.id] || player) : { x: 1250, y: 1050 };
   const { sx: shakeX, sy: shakeY } = getShakeOffset();
+  // El margen conserva etiquetas, armas y sombras en los bordes de la cámara.
+  const inView = (x, y, radius = 0) => Math.abs(x - jugadorLocal.x) <= window.innerWidth / 2 + radius + 128
+    && Math.abs(y - jugadorLocal.y) <= window.innerHeight / 2 + radius + 128;
+  const visibleObstacles = obstaculos.filter(object => inView(object.x + object.width / 2,
+    object.y + object.height / 2, Math.max(object.width, object.height) / 2));
   ctx.save();
   ctx.translate(window.innerWidth / 2 - jugadorLocal.x + shakeX, window.innerHeight / 2 - jugadorLocal.y + shakeY);
 
@@ -1294,15 +1679,15 @@ function draw() {
   ctx.beginPath();
   ctx.rect(0, 0, mapWidth, mapHeight);
   ctx.clip();
-  WorldArt.terrain(ctx, floorImage, mapWidth, mapHeight);
+  WorldArt.terrain(ctx, floorImage, mapWidth, mapHeight, inView);
+  if (WorldArt.map !== 'orbital') WorldArt.specialZones(ctx, inView);
   ctx.restore();
 
   // Obstáculos estáticos: se dibujan antes de plataformas, balas y jugadores.
-  for (const obstaculo of obstaculos) {
-    if (Math.abs(obstaculo.x - jugadorLocal.x) > window.innerWidth / 2 + obstaculo.width
-      || Math.abs(obstaculo.y - jugadorLocal.y) > window.innerHeight / 2 + obstaculo.height) continue;
+  for (const obstaculo of visibleObstacles) {
     WorldArt.obstacle(ctx, obstaculo);
   }
+  if (WorldArt.map === 'orbital') WorldArt.specialZones(ctx, inView);
 
   // Borde del mundo: ayuda a comprobar visualmente dónde no se puede avanzar.
   ctx.strokeStyle = '#ff3b30';
@@ -1311,6 +1696,7 @@ function draw() {
 
   // Las plataformas se dibujan antes que los jugadores, por lo que quedan debajo de ellos.
   for (const plataforma of plataformas) {
+    if (!inView(plataforma.x, plataforma.y)) continue;
     if (platformImage.complete && platformImage.naturalWidth) {
       ctx.drawImage(
         platformImage,
@@ -1327,6 +1713,7 @@ function draw() {
 
   // Items tirados en el suelo: pequeño icono con brillo parpadeante.
   for (const drop of itemsEnSuelo) {
+    if (!inView(drop.x, drop.y)) continue;
     const pulso = 0.7 + 0.3 * Math.sin(performance.now() / 300);
     ctx.save();
     ctx.globalAlpha = pulso;
@@ -1350,6 +1737,7 @@ function draw() {
   }
 
   for (const cofre of cofres) {
+    if (!inView(cofre.x, cofre.y)) continue;
     ctx.fillStyle = cofre.abierto ? '#506960' : '#815636';
     ctx.strokeStyle = '#e6c55d'; ctx.lineWidth = 3;
     ctx.fillRect(cofre.x - 25, cofre.y - 18, 50, 36);
@@ -1359,11 +1747,12 @@ function draw() {
     ctx.fillStyle = '#e6c55d'; ctx.fillRect(cofre.x - 4, cofre.y - 5, 8, 12);
   }
 
-  for (const bush of obstaculos.filter((object) => object.tipo === 'arbusto')) WorldArt.bush(ctx, bush, jugadores[network.id]);
+  for (const bush of visibleObstacles.filter((object) => object.tipo === 'arbusto')) WorldArt.bush(ctx, bush, jugadores[network.id]);
 
   // Todas las balas provienen del estado enviado por el servidor.
   // Balas: usa imagen si cargó, si no dibuja un círculo simple
   for (const bala of balas) {
+    if (!inView(bala.x, bala.y)) continue;
     ctx.save();
     ctx.translate(bala.x, bala.y);
     ctx.rotate(bala.angle);
@@ -1385,6 +1774,7 @@ function draw() {
   for (const id in jugadores) {
     const jugador = jugadores[id];
     if (jugador.muerto || !jugador.unido) continue;
+    if (!inView(jugador.x, jugador.y)) continue;
     if (Buildings.concealed(obstaculos, jugador, jugadores[network.id])) continue;
 
     ctx.save();
@@ -1451,7 +1841,8 @@ function draw() {
   const nearbyLoot = getNearbyLootPlatform(jugadorLocal);
   const nearbyDoor = getNearbyDoor(jugadorLocal);
   const nearbyChest = getNearbyChest(jugadorLocal);
-  const interactionLabel = nearbyChest ? 'Abrir cofre' : nearbyDoor ? (nearbyDoor.puertaAbierta ? 'Cerrar puerta' : 'Abrir puerta') : 'Intercambiar';
+  const doorName = nearbyDoor?.compuerta ? 'compuerta' : 'puerta';
+  const interactionLabel = nearbyChest ? 'Abrir cofre' : nearbyDoor ? `${nearbyDoor.puertaAbierta ? 'Cerrar' : 'Abrir'} ${doorName}` : 'Intercambiar';
   if (nearbyLoot && !nearbyDoor && !isMobile) {
     ctx.save();
     ctx.font = 'bold 18px sans-serif';
@@ -1485,6 +1876,7 @@ function draw() {
 
   // Granadas en vuelo (en coordenadas mundo = dentro del save de cámara)
   for (const g of granadosEnVuelo) {
+    if (!inView(g.x, g.y)) continue;
     ctx.save();
     ctx.translate(g.x, g.y);
     ctx.rotate(g.angle);
@@ -1507,7 +1899,7 @@ function draw() {
     ctx.restore();
   }
 
-  for (const building of obstaculos.filter(Buildings.isBuilding)) WorldArt.roof(ctx, building, jugadorLocal);
+  for (const building of visibleObstacles.filter(Buildings.isBuilding)) WorldArt.roof(ctx, building, jugadorLocal);
   if (nearbyDoor || nearbyChest) {
     ctx.save();
     ctx.font = 'bold 15px sans-serif';
