@@ -498,7 +498,9 @@ network.on('configPartida', (rules) => {
   }
 });
 
-network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, mapa = 'outpost', obstaculos: obstaculosDelServidor, zonasEspeciales }) => {
+let portales = [];
+network.on('configMapa', ({ MAP_WIDTH, MAP_HEIGHT, mapa = 'outpost', obstaculos: obstaculosDelServidor, zonasEspeciales, portales: nuevosPortales = [] }) => {
+  portales = nuevosPortales;
   WorldArt.setMap(mapa);
   if (zonasEspeciales) SpecialZones.zones.splice(0, SpecialZones.zones.length, ...zonasEspeciales);
   mapWidth = MAP_WIDTH;
@@ -1069,7 +1071,11 @@ function attemptExchange() {
   if (!gameStarted || gameFinished) return;
   const jugadorLocal = jugadores[network.id];
   if (jugadorLocal?.abatido || getNearbyDowned(jugadorLocal)) return;
-  if (getNearbyChest(jugadorLocal) || getNearbyDoor(jugadorLocal) || getNearbyLootPlatform(jugadorLocal)) network.send('intercambiar', {});
+  if (getNearbyPortal(jugadorLocal) || getNearbyChest(jugadorLocal) || getNearbyDoor(jugadorLocal) || getNearbyLootPlatform(jugadorLocal)) network.send('intercambiar', {});
+}
+function getNearbyPortal(jugador) {
+  if (!jugador?.unido || jugador.muerto || jugador.abatido || jugador.reanimando) return null;
+  return portales.find(portal => Math.hypot(jugador.x - portal.x, jugador.y - portal.y) <= 105) || null;
 }
 function getNearbyDowned(jugador) {
   if (!currentTeams || !jugador?.unido || jugador.muerto || jugador.abatido) return null;
@@ -1457,6 +1463,10 @@ function drawMinimap() {
   }
 
   // Plataformas: punto amarillo si tienen loot, gris si están vacías
+  for (const portal of portales) {
+    ctx.strokeStyle = portal.color; ctx.lineWidth = 2;
+    ctx.strokeRect(mx + portal.x * scaleX - 3, my + portal.y * scaleY - 3, 6, 6);
+  }
   for (const plat of plataformas) {
     ctx.fillStyle = plat.objeto ? '#ffd54a' : '#556';
     ctx.beginPath();
@@ -1792,6 +1802,7 @@ function draw() {
     WorldArt.obstacle(ctx, obstaculo);
   }
   if (WorldArt.map === 'orbital') WorldArt.specialZones(ctx, inView);
+  WorldArt.portals(ctx, portales, inView);
 
   // Borde del mundo: ayuda a comprobar visualmente dónde no se puede avanzar.
   ctx.strokeStyle = '#ff3b30';
@@ -1957,8 +1968,11 @@ function draw() {
   const nearbyDoor = getNearbyDoor(jugadorLocal);
   const nearbyChest = getNearbyChest(jugadorLocal);
   const nearbyDowned = getNearbyDowned(jugadorLocal);
+  const nearbyPortal = getNearbyPortal(jugadorLocal);
+  const portalWait = Math.max(0, Math.ceil(((jugadorLocal.portalHasta || 0) - Date.now()) / 1000));
   const doorName = nearbyDoor?.compuerta ? 'compuerta' : 'puerta';
   const interactionLabel = nearbyDowned ? `Mantener para levantar · ${Math.floor((nearbyDowned.progresoReanimacion || 0) * 100)}%`
+    : nearbyPortal ? `Portal ${nearbyPortal.enlace}${portalWait ? ` · Espera ${portalWait}s` : ' · Viajar a otra sala'}`
     : nearbyChest ? 'Abrir cofre' : nearbyDoor ? `${nearbyDoor.puertaAbierta ? 'Cerrar' : 'Abrir'} ${doorName}` : 'Intercambiar';
   if (nearbyLoot && !nearbyDoor && !isMobile) {
     ctx.save();
@@ -2017,7 +2031,7 @@ function draw() {
   }
 
   for (const building of visibleObstacles.filter(Buildings.isBuilding)) WorldArt.roof(ctx, building, jugadorLocal);
-  if (nearbyDoor || nearbyChest || nearbyDowned) {
+  if (nearbyDoor || nearbyChest || nearbyDowned || nearbyPortal) {
     ctx.save();
     ctx.font = 'bold 15px sans-serif';
     ctx.textAlign = 'center';
@@ -2045,7 +2059,7 @@ function draw() {
   actualizarMensajeRespawn(jugadorLocal);
   document.getElementById('drop-button').disabled = jugadorLocal.abatido || !!jugadorLocal.reanimando || !jugadorLocal.inventario?.[jugadorLocal.slotSeleccionado]
     || jugadorLocal.inventario[jugadorLocal.slotSeleccionado] === 'puños';
-  swapButton?.classList.toggle('visible', Boolean((nearbyLoot || nearbyDoor || nearbyChest || nearbyDowned) && !jugadorLocal.abatido && isMobile));
+  swapButton?.classList.toggle('visible', Boolean((nearbyLoot || nearbyDoor || nearbyChest || nearbyDowned || nearbyPortal) && !jugadorLocal.abatido && isMobile));
   swapButton.title = interactionLabel;
   swapButton.setAttribute('aria-label', interactionLabel);
   drawInventoryUI(jugadorLocal);

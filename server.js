@@ -21,7 +21,7 @@ let mapaSiguiente = null;
 let votacionMapa = null;
 let ultimoSegundoVotacion = null;
 let siguienteRonda = null;
-const { platforms: plataformas, obstacles: obstaculos } = Maps.create(mapaActual);
+const { platforms: plataformas, obstacles: obstaculos, portals: portales } = Maps.create(mapaActual);
 let navegacion = null;
 const rutasBots = new Map();
 // Items sueltos tirados por jugadores: { id, x, y, item }
@@ -46,6 +46,8 @@ const nuevasReservas = () => ({ pistola: 0, rifle: 0, sniper: 0, escopeta: 0 });
 const cofres = [];
 const rarezaAleatoria = () => { const valor = Math.random(); return valor < 0.65 ? 0 : valor < 0.9 ? 1 : 2; };
 function equipoInicial(jugador) {
+  jugador.portalHasta = 0;
+  jugador.portalMovimientoHasta = 0;
   jugador.inventario = ['puños', 'pistola', null, null, null];
   jugador.municionPorSlot = [0, 12, null, null, null];
   jugador.rarezas = [0, 0, 0, 0, 0];
@@ -377,7 +379,7 @@ function reglasPartida() {
 }
 
 function configMapa() {
-  return { MAP_WIDTH, MAP_HEIGHT, mapa: mapaActual, obstaculos, zonasEspeciales: SpecialZones.zones };
+  return { MAP_WIDTH, MAP_HEIGHT, mapa: mapaActual, obstaculos, portales, zonasEspeciales: SpecialZones.zones };
 }
 function cargarMapa(id) {
   if (id === mapaActual) return;
@@ -387,6 +389,7 @@ function cargarMapa(id) {
   zonaSegura.y = id === 'orbital' ? 3600 : MAP_HEIGHT / 2;
   zonaSegura.radio = Math.hypot(MAP_WIDTH, MAP_HEIGHT) / 2;
   obstaculos.splice(0, obstaculos.length, ...map.obstacles);
+  portales.splice(0, portales.length, ...map.portals);
   navegacion = id === 'orbital' ? new Navigation(obstaculos) : null;
   rutasBots.clear();
   plataformas.splice(0, plataformas.length, ...map.platforms);
@@ -825,6 +828,7 @@ function abandonarPartida(id, client) {
 const tiemposMovimiento = new WeakMap();
 function updateMovement(id, { x, y, angle } = {}) {
   if (!partidaEnCurso || !jugadores[id] || jugadores[id].muerto
+    || Date.now() < (jugadores[id].portalMovimientoHasta || 0)
     || (!jugadores[id].esBot && !jugadores[id].unido)
     || ![x, y, angle].every(Number.isFinite)) return;
   const jugador = jugadores[id];
@@ -912,9 +916,23 @@ function reloadWeapon(id) {
   iniciarRecarga(id);
 }
 
+function usarPortal(jugador, portal) {
+  if (!partidaEnCurso || Date.now() < finPreparacion || !jugador?.unido || jugador.muerto
+    || jugador.abatido || jugador.reanimando || Date.now() < (jugador.portalHasta || 0)
+    || Math.hypot(jugador.x - portal.x, jugador.y - portal.y) > 105) return false;
+  const destino = portales.find(candidate => candidate.id === portal.destinoId);
+  if (!destino || colisionaConObstaculo(destino.x, destino.y)) return false;
+  Object.assign(jugador, { x: destino.x, y: destino.y, portalHasta: Date.now() + 3000,
+    portalMovimientoHasta: Date.now() + 200 });
+  tiemposMovimiento.delete(jugador);
+  return true;
+}
+
 function interactuar(id) {
   const jugador = jugadores[id];
   if (!jugador?.unido || jugador.muerto || jugador.abatido || jugador.reanimando) return;
+  const portal = portales.find(candidate => Math.hypot(jugador.x - candidate.x, jugador.y - candidate.y) <= 105);
+  if (portal) { usarPortal(jugador, portal); return; }
   const cofre = cofres.find((candidate) => !candidate.abierto && Math.hypot(jugador.x - candidate.x, jugador.y - candidate.y) <= 105);
   if (cofre) {
     cofre.abierto = true;
@@ -1168,6 +1186,19 @@ function actualizarBots() {
       }
     }
     if (!objetivo) continue;
+    if (Date.now() >= (bot.portalHasta || 0)) {
+      const directo = Math.hypot(bot.x - objetivo.x, bot.y - objetivo.y);
+      const atajo = portales.map(portal => {
+        const salida = portales.find(candidate => candidate.id === portal.destinoId);
+        return { portal, coste: Math.hypot(bot.x - portal.x, bot.y - portal.y)
+          + Math.hypot(salida.x - objetivo.x, salida.y - objetivo.y) + 400 };
+      }).filter(candidate => candidate.coste < directo).sort((a, b) => a.coste - b.coste)[0];
+      if (atajo) {
+        if (usarPortal(bot, atajo.portal)) { rutasBots.delete(botId); continue; }
+        objetivo = atajo.portal;
+        distanciaObjetivo = Math.hypot(bot.x - objetivo.x, bot.y - objetivo.y);
+      }
+    }
 
     // Garantiza que el bot nunca se quede sin arma real. Puños no cuenta como arma.
     const esArmaDisparable = (it, slot) => it && it !== 'puños' && STATS_ARMAS[it]?.capacidadCargador
@@ -1229,7 +1260,7 @@ function actualizarBots() {
 
     // Reutiliza la misma lógica de disparo, cooldown y dispersión que un humano.
     const cuerpoACuerpo = armaActual(bot) === 'puños';
-    if (!rescatando && distanciaObjetivo < (cuerpoACuerpo ? 100 : dificultad.alcance)) {
+    if (!rescatando && !objetivo.destinoId && distanciaObjetivo < (cuerpoACuerpo ? 100 : dificultad.alcance)) {
       if (!cuerpoACuerpo && bot.balasEnCargador <= 0) {
         iniciarRecarga(botId);
         continue;

@@ -48,7 +48,14 @@
     const platforms = layout.rooms.slice(0, 10).map(room => ({
       x: room.x + 680, y: room.y + 650, objeto: null,
     }));
-    return { platforms, obstacles };
+    const colors = ['#65eaff', '#c699ff', '#ffbd69', '#85ffbc', '#ff83ba', '#e5ec82'];
+    const portals = [[0, 11], [2, 9], [1, 7], [3, 8], [4, 10], [5, 6]].flatMap(([first, second], pair) =>
+      [first, second].map((room, side) => ({
+        id: `portal-${pair}-${side}`, destinoId: `portal-${pair}-${1 - side}`,
+        enlace: String.fromCharCode(65 + pair), color: colors[pair],
+        x: layout.rooms[room].x + 450, y: layout.rooms[room].y + 700, radio: 65,
+      })));
+    return { platforms, obstacles, portals };
   }
   function create(id) {
     if (!valid(id)) throw new Error(`Mapa desconocido: ${id}`);
@@ -84,7 +91,7 @@
           && bush.y < object.y + object.height + 40 && bush.y + bush.height + 40 > object.y)) continue;
         obstacles.push(bush);
     }
-    return { platforms, obstacles };
+    return { platforms, obstacles, portals: [] };
   }
   const api = { catalog, valid, create, stationLayout };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

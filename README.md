@@ -163,6 +163,12 @@ Un compañero activo a menos de 105 unidades y sin paredes entre ambos puede lev
 
 Al levantarse recupera **25 de vida y cero escudo**. Los charcos no levantan abatidos ni recargan su resistencia. Los bots también pueden quedar abatidos y priorizan rescatar compañeros cercanos. Si se agotan los 20 segundos, un enemigo lo remata o todo su equipo vivo queda abatido, muere y reaparece con las reglas habituales. La baja se suma solo al morir definitivamente, nunca al abatir o reanimar; el desangrado conserva la autoría del atacante original. Los demás modos mantienen la muerte y reaparición anteriores.
 
+### Portales de la estación espacial
+
+La Estación Orbital tiene **seis parejas de portales** (A–F), una entrada en cada sala. Los extremos de cada enlace comparten letra y color y aparecen en el minimapa. Acércate y pulsa **E**, o el botón de interacción en móvil, para viajar a la sala enlazada. Hay **3 segundos de espera** entre viajes; no se activan solos al llegar.
+
+El servidor decide el destino y replica el traslado con Socket.IO o WebSocket nativo. Funcionan durante el combate en todos los modos; no permiten viajar muerto, abatido ni mientras reanimas a un compañero. Conservan vida, escudo e inventario, y no evitan el daño de la tormenta en la sala de llegada. Los bots los usan cuando acortan su ruta. La isla original no tiene portales.
+
 ### Charcos de recuperación
 
 Además de las zonas de daño y hielo, cada mapa genera **dos charcos nuevos**, uno de cada tipo:

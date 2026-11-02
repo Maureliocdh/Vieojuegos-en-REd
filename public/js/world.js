@@ -19,6 +19,28 @@
       currentMap = id;
     },
     get map() { return currentMap; },
+    portals(context, portals, inView) {
+      for (const portal of portals) {
+        if (inView && !inView(portal.x, portal.y, 100)) continue;
+        context.save();
+        context.translate(portal.x, portal.y);
+        context.fillStyle = '#07152ee6';
+        context.strokeStyle = portal.color;
+        context.lineWidth = 5;
+        context.beginPath(); context.ellipse(0, 0, 65, 45, 0, 0, Math.PI * 2); context.fill(); context.stroke();
+        context.save();
+        context.scale(1, 0.7);
+        context.rotate(performance.now() / 1200);
+        context.lineWidth = 3;
+        for (let i = 0; i < 3; i += 1) {
+          context.beginPath(); context.arc(0, 0, 25 + i * 11, i * 2, i * 2 + 1.6); context.stroke();
+        }
+        context.restore();
+        context.font = 'bold 18px sans-serif'; context.textAlign = 'center';
+        context.fillStyle = portal.color; context.fillText(`PORTAL ${portal.enlace}`, 0, -60);
+        context.restore();
+      }
+    },
     specialZones(context, inView) {
       for (const zone of SpecialZones.zones) {
         if (inView && !inView(zone.x, zone.y, zone.radio)) continue;

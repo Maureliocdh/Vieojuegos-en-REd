@@ -48,6 +48,28 @@ test('Mapas desconocidos se rechazan', () => {
   }
 });
 
+test('Portales: seis parejas unen las doce salas, sin obstáculos, peligros ni solapamientos', () => {
+  const map = Maps.create('orbital');
+  assert.equal(Maps.create('outpost').portals.length, 0);
+  assert.equal(map.portals.length, 12);
+  const walls = map.obstacles.flatMap(Buildings.walls);
+  const rooms = Maps.stationLayout().rooms;
+  for (const portal of map.portals) {
+    const destination = map.portals.find(other => other.id === portal.destinoId);
+    assert.ok(destination);
+    assert.equal(destination.destinoId, portal.id);
+    assert.equal(destination.color, portal.color);
+    assert.equal(destination.enlace, portal.enlace);
+    assert.ok(Math.hypot(destination.x - portal.x, destination.y - portal.y) > 1000);
+    assert.ok(!walls.some(wall => Math.hypot(portal.x - Math.max(wall.x, Math.min(portal.x, wall.x + wall.width)),
+      portal.y - Math.max(wall.y, Math.min(portal.y, wall.y + wall.height))) < 105));
+    for (let i = 0; i < 10; i += 1) {
+      assert.ok(Zones.generateStation(rooms).every(zone => Math.hypot(zone.x - portal.x, zone.y - portal.y) > zone.radio + 105));
+    }
+  }
+  assert.ok(rooms.every(room => map.portals.some(portal => Buildings.inside({ ...room, tipo: 'casa' }, portal))));
+});
+
 test('Estación cerrada: todas las salas y cubiertas se comunican solo por suelo transitable', () => {
   const map = Maps.create('orbital');
   const nav = new Navigation(map.obstacles);

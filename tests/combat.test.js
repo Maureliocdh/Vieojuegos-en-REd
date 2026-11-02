@@ -56,6 +56,51 @@ function revivalGame() {
   return result;
 }
 
+test('Portales autoritativos: ida y vuelta, cooldown, preparación, abatidos y sincronización de movimiento', () => {
+  const { game, advance } = loadGame();
+  game.addPlayer('a');
+  game.unirseSala('a', 'A', null, 'nova', { mapa: 'orbital', cantidadBots: 0 });
+  game.iniciarDesdeSala('a');
+  const portals = game.configMapa().portales;
+  const source = portals[0], destination = portals.find(portal => portal.id === source.destinoId);
+  const player = game.jugadores.a;
+  Object.assign(player, { x: source.x, y: source.y });
+  game.processClientMessage('a', { type: 'intercambiar', data: { destinoId: 'inventado' } });
+  assert.equal(player.x, source.x);
+  advance(4000);
+  for (const state of ['abatido', 'muerto', 'reanimando']) {
+    player[state] = true;
+    game.interactuar('a'); assert.equal(player.x, source.x);
+    player[state] = false;
+  }
+  player.x += 150; game.interactuar('a'); assert.equal(player.x, source.x + 150);
+  player.x = source.x;
+  game.processClientMessage('a', { type: 'intercambiar', data: { x: 0, y: 0 } });
+  assert.equal(player.x, destination.x); assert.equal(player.y, destination.y);
+  game.updateMovement('a', { x: source.x, y: source.y, angle: 0 });
+  assert.equal(player.x, destination.x);
+  game.interactuar('a'); assert.equal(player.x, destination.x);
+  advance(2999); game.interactuar('a'); assert.equal(player.x, destination.x);
+  advance(1); game.interactuar('a');
+  assert.equal(player.x, source.x); assert.equal(player.y, source.y);
+  assert.equal(player.vida, 100); assert.equal(player.escudo, 0);
+});
+
+test('Portales: los bots usan un enlace que acorta su ruta hacia el enemigo', () => {
+  const { game, advance } = loadGame();
+  game.addPlayer('a');
+  game.unirseSala('a', 'A', null, 'nova', { mapa: 'orbital', cantidadBots: 5 });
+  game.iniciarDesdeSala('a'); advance(4000);
+  const source = game.configMapa().portales[0];
+  const destination = game.configMapa().portales.find(portal => portal.id === source.destinoId);
+  const bot = game.jugadores.bot1;
+  for (const player of Object.values(game.jugadores)) player.muerto = true;
+  Object.assign(bot, { muerto: false, x: source.x, y: source.y });
+  Object.assign(game.jugadores.a, { muerto: false, x: destination.x + 100, y: destination.y });
+  game.actualizarBots();
+  assert.equal(bot.x, destination.x); assert.equal(bot.y, destination.y);
+});
+
 test('Abatidos: bala letal conserva inventario, permite arrastrarse y bloquea acciones y curación', () => {
   const { game, tick, advance } = revivalGame();
   const victim = game.jugadores.a;
